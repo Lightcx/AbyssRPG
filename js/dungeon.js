@@ -100,23 +100,35 @@
     m.isBoss = floor % 5 === 0;
     m.floor = floor;
 
-    // 1) 房间
-    const roomCount = G.clamp(7 + Math.floor(floor * 0.4), 7, 13) + (m.isBoss ? 1 : 0);
+    /* 1) 网格化房间布局
+     * 把地图切成 cols×rows 个格子，每格最多一间房 —— 房间天然不重叠，
+     * 走廊只连接相邻格子，因此不会再出现横穿全图的一堆乱路。 */
+    const cols = G.clamp(3 + (floor >= 26 ? 1 : 0), 3, 4);
+    const rows = G.clamp(2 + (floor >= 41 ? 1 : 0), 2, 3);
+    const pad = 3;
+    const cellW = (W - pad * 2) / cols, cellH = (H - pad * 2) / rows;
     const rooms = [];
-    const maxTries = 260;
-    for (let t = 0; t < maxTries && rooms.length < roomCount; t++) {
-      const rw = rng.int(7, 15), rh = rng.int(6, 13);
-      const rx = rng.int(3, W - rw - 4), ry = rng.int(3, H - rh - 4);
-      let ok = true;
-      for (let i = 0; i < rooms.length; i++) {
-        const o = rooms[i];
-        if (rx < o.x + o.w + 3 && rx + rw + 3 > o.x && ry < o.y + o.h + 3 && ry + rh + 3 > o.y) { ok = false; break; }
+    const cellAt = {};
+    for (let gy = 0; gy < rows; gy++) {
+      for (let gx = 0; gx < cols; gx++) {
+        if (rooms.length >= 4 && rng.chance(0.14)) continue;     // 偶尔留空一格，避免过于规整
+        const cw = Math.floor(cellW) - 2, ch = Math.floor(cellH) - 2;
+        const rw = G.clamp(rng.int(7, 13), 6, cw);
+        const rh = G.clamp(rng.int(6, 11), 5, ch);
+        const bx = Math.round(pad + gx * cellW), by = Math.round(pad + gy * cellH);
+        const room = {
+          x: bx + 1 + rng.int(0, Math.max(0, cw - rw - 1)),
+          y: by + 1 + rng.int(0, Math.max(0, ch - rh - 1)),
+          w: rw, h: rh, type: 'normal', gx: gx, gy: gy,
+        };
+        room.cx = room.x + (rw >> 1);
+        room.cy = room.y + (rh >> 1);
+        rooms.push(room);
+        cellAt[gx + ',' + gy] = room;
       }
-      if (!ok) continue;
-      rooms.push({ x: rx, y: ry, w: rw, h: rh, cx: Math.floor(rx + rw / 2), cy: Math.floor(ry + rh / 2), type: 'normal' });
     }
     m.rooms = rooms;
-    if (!rooms.length) return DG.generate(rng, { floor: 1, diffIdx: 0 });
+    if (rooms.length < 3) return DG.generate(rng, { floor: 1, diffIdx: 0 });
 
     // 2) 挖房间
     const carve = (x, y, w, h) => {
@@ -124,26 +136,76 @@
     };
     rooms.forEach((r) => carve(r.x, r.y, r.w, r.h));
 
-    // 3) 走廊（顺序连接 + 额外环路）
-    const corridor = (a, b, width) => {
-      width = width || 2;
-      let x = a.cx, y = a.cy;
-      const hFirst = rng.chance(0.5);
-      const digH = (from, to, yy) => { for (let tx = Math.min(from, to); tx <= Math.max(from, to); tx++) for (let k = 0; k < width; k++) setAt(m, tx, yy + k, 1); };
-      const digV = (from, to, xx) => { for (let ty = Math.min(from, to); ty <= Math.max(from, to); ty++) for (let k = 0; k < width; k++) setAt(m, xx + k, ty, 1); };
-      if (hFirst) { digH(x, b.cx, y); digV(y, b.cy, b.cx); }
-      else { digV(y, b.cy, x); digH(x, b.cx, b.cy); }
+    /* 3) 走廊：只连相邻格子，L 形、宽度 2（等于一个门洞），拐角自然 */
+    const corridor = (a, b) => {
+      const w = 2;
+      const digH = (x1, x2, y) => { for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) for (let k = 0; k < w; k++) setAt(m, x, y + k, 1); };
+      const digV = (y1, y2, x) => { for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) for (let k = 0; k < w; k++) setAt(m, x + k, y, 1); };
+      const hFirst = a.gy === b.gy ? true : (a.gx === b.gx ? false : rng.chance(0.5));
+      if (hFirst) { digH(a.cx, b.cx, a.cy); digV(a.cy, b.cy, b.cx); }
+      else { digV(a.cy, b.cy, a.cx); digH(a.cx, b.cx, b.cy); }
       m.corridors.push({ x1: a.cx, y1: a.cy, x2: b.cx, y2: b.cy });
     };
-    for (let i = 1; i < rooms.length; i++) corridor(rooms[i - 1], rooms[i], rng.int(2, 3));
-    const extra = rng.int(1, 3);
-    for (let i = 0; i < extra; i++) {
-      const a = rng.pick(rooms), b = rng.pick(rooms);
-      if (a !== b) corridor(a, b, 2);
+    const linked = {};
+    const linkKey = (a, b) => {
+      const ia = rooms.indexOf(a), ib = rooms.indexOf(b);
+      return ia < ib ? ia + '-' + ib : ib + '-' + ia;
+    };
+    const link = (a, b) => {
+      if (!a || !b || a === b) return false;
+      const k = linkKey(a, b);
+      if (linked[k]) return false;
+      linked[k] = true;
+      corridor(a, b);
+      return true;
+    };
+    // 3a) 先连右邻与下邻（留一点缺口 → 自然出现死路分支）
+    rooms.forEach((r) => {
+      const right = cellAt[(r.gx + 1) + ',' + r.gy];
+      const down = cellAt[r.gx + ',' + (r.gy + 1)];
+      if (right && rng.chance(0.88)) link(r, right);
+      if (down && rng.chance(0.88)) link(r, down);
+    });
+    // 3b) 保证全图连通：没连上的房间接到最近的已连通房间
+    const seen = new Array(rooms.length).fill(false);
+    seen[rooms.indexOf(rooms[0])] = true;
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (let i = 0; i < rooms.length; i++) {
+        if (seen[i]) continue;
+        for (let j = 0; j < rooms.length; j++) {
+          if (!seen[j]) continue;
+          if (linked[linkKey(rooms[i], rooms[j])]) { seen[i] = true; grew = true; break; }
+        }
+      }
+    }
+    for (let i = 0; i < rooms.length; i++) {
+      if (seen[i]) continue;
+      let best = -1, bd = 1e9;
+      for (let j = 0; j < rooms.length; j++) {
+        if (!seen[j]) continue;
+        const d = G.dist2(rooms[i].cx, rooms[i].cy, rooms[j].cx, rooms[j].cy);
+        if (d < bd) { bd = d; best = j; }
+      }
+      if (best >= 0) { link(rooms[i], rooms[best]); seen[i] = true; }
+    }
+    // 3c) 少量环路，避免整层是一棵树
+    for (let i = 0, n = rng.int(1, 2); i < n; i++) {
+      const a = rng.pick(rooms);
+      const sameRow = cellAt[(a.gx + 2) + ',' + a.gy];
+      const sameCol = cellAt[a.gx + ',' + (a.gy + 2)];
+      const b = sameRow && (!sameCol || rng.chance(0.5)) ? sameRow : sameCol;
+      if (b) link(a, b);
     }
 
-    // 4) 起点 = 第一个房间，出口 = 距离最远的房间
-    const startRoom = rooms[0];
+    // 4) 起点 = 最靠左上角的房间，出口 = 距离最远的房间
+    let startRoom = rooms[0];
+    rooms.forEach((r) => {
+      const score = r.gx + r.gy;
+      const best = startRoom.gx + startRoom.gy;
+      if (score < best || (score === best && r.gx < startRoom.gx)) startRoom = r;
+    });
     let far = rooms[rooms.length - 1], farD = -1;
     rooms.forEach((r) => {
       const d = G.dist2(r.cx, r.cy, startRoom.cx, startRoom.cy);

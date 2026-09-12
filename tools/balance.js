@@ -19,7 +19,7 @@ const rng = G.RNG(20240701);
  *  best      = 全身稀有，代表刷到好装备后的上限
  */
 const GEAR_MODE = process.argv[4] || 'realistic';
-function buildPlayer(level) {
+function buildPlayer(level, floor, diffIdx) {
   const p = G.ENT.makePlayer({ rng, mlvl: 1, diffIdx: 0 }, clsId);
   p.level = level;
   const cls = D.classById(clsId);
@@ -28,12 +28,14 @@ function buildPlayer(level) {
   p.alloc[cls.primary] = Math.floor(pts * 0.6);
   p.alloc.vit = Math.floor(pts * 0.4);
   const actives = D.activeSkills(clsId);
-  p.skills[actives[0]] = Math.min(20, Math.max(1, Math.floor(level / 3)));
-  p.skills[actives[1]] = Math.min(20, Math.max(1, Math.floor(level / 4)));
+  p.skills[actives[0]] = Math.min(25, Math.max(1, Math.floor(level / 3)));
+  p.skills[actives[1]] = Math.min(25, Math.max(1, Math.floor(level / 4)));
   const mf = Math.min(250, level * 4);
+  /* 装备按当前层数 / 难度的掉落阶段生成，代表这个进度下真实能捡到的东西 */
+  const stage = G.Loot.rarityStage(floor, D.diffOf(diffIdx).quality);
   D.gearSlots().forEach((slot) => {
     const s = (slot === 'ring1' || slot === 'ring2') ? 'ring' : slot;
-    const opts = { ilvl: level + 2, slot: s, cls: clsId, mf };
+    const opts = { ilvl: level + 2, slot: s, cls: clsId, mf, stage };
     if (GEAR_MODE === 'best') opts.rarity = rng.chance(0.22) ? 'unique' : 'rare';
     p.gear[slot] = G.Loot.makeItem(rng, opts);
   });
@@ -62,17 +64,28 @@ function bossHp(mlvl, diffIdx) {
   return D.BOSSES[0].life * Math.pow(G.BALANCE.monsterLifeExp, mlvl) * diff.hp * (G.BALANCE.bossLife || 1.35);
 }
 
-console.log('职业: ' + D.classById(clsId).name + '　抽样 ' + SAMPLES + ' 次/等级（随机稀有装备，主属性60%/体力40%，等级=怪物等级）');
+console.log('职业: ' + D.classById(clsId).name + '　抽样 ' + SAMPLES + ' 次/采样点（装备按该进度的掉落阶段生成，等级=怪物等级）');
 console.log('');
-console.log(' mlvl |  生命  |  护甲  | 普攻DPS | 技能DPS | 小怪HP | 秒杀小怪 | 精英HP | 秒精英 | BOSS_HP | 秒BOSS | 小怪单次伤害 | 可承受次数 | 难度');
+console.log(' 层数 |  难度  | mlvl |  生命  |  护甲  | 普攻DPS | 技能DPS | 小怪HP | 秒杀小怪 | 精英HP | 秒精英 | BOSS_HP | 秒BOSS | 小怪单次伤害 | 可承受次数');
 console.log('-'.repeat(150));
+
+/* 采样点：6 档难度 × 若干层数，怪物等级完全由 G.mlvlOf 决定 */
+const POINTS = [
+  { floor: 2, diff: 0 }, { floor: 9, diff: 0 }, { floor: 16, diff: 0 }, { floor: 24, diff: 0 },
+  { floor: 5, diff: 1 }, { floor: 15, diff: 1 }, { floor: 28, diff: 1 },
+  { floor: 10, diff: 2 }, { floor: 25, diff: 2 }, { floor: 38, diff: 2 },
+  { floor: 15, diff: 3 }, { floor: 32, diff: 3 }, { floor: 46, diff: 3 },
+  { floor: 25, diff: 4 }, { floor: 42, diff: 4 }, { floor: 56, diff: 4 },
+  { floor: 35, diff: 5 }, { floor: 52, diff: 5 }, { floor: 70, diff: 5 }, { floor: 88, diff: 5 },
+];
 const rows = [];
-for (let mlvl = 2; mlvl <= 92; mlvl += 6) {
-  const diffIdx = Math.min(4, Math.floor(mlvl / 22));
+POINTS.forEach((pt) => {
+  const diffIdx = pt.diff;
   const diff = D.diffOf(diffIdx);
+  const mlvl = G.mlvlOf(pt.floor, diffIdx);
   let life = 0, armor = 0, basic = 0, skill = 0, taken = 0, hits = 0;
   for (let i = 0; i < SAMPLES; i++) {
-    const p = buildPlayer(mlvl);
+    const p = buildPlayer(mlvl, pt.floor, diffIdx);
     const b = dpsOf(p, clsId + '_basic');
     let best = 0;
     D.activeSkills(clsId).forEach((id) => { const d = dpsOf(p, id); if (d > best) best = d; });
@@ -88,24 +101,27 @@ for (let mlvl = 2; mlvl <= 92; mlvl += 6) {
   const eliteHp = monsterHp(mlvl, diffIdx, 'elite');
   const bHp = bossHp(mlvl, diffIdx);
   const row = {
-    mlvl, life, armor, basic, skill, trashHp, trashTtk: trashHp / pdps,
+    floor: pt.floor, mlvl, life, armor, basic, skill, trashHp, trashTtk: trashHp / pdps,
     eliteHp, eliteTtk: eliteHp / pdps, bHp, bossTtk: bHp / pdps, taken, hits, diff: diff.name,
   };
   rows.push(row);
   console.log(
+    String(pt.floor).padStart(5) + ' |' + diff.name.padStart(6) + '  |' +
     String(mlvl).padStart(5) + ' |' + String(Math.round(life)).padStart(8) + ' |' + String(Math.round(armor)).padStart(7) + ' |' +
     String(Math.round(basic)).padStart(8) + ' |' + String(Math.round(skill)).padStart(8) + ' |' +
     String(Math.round(trashHp)).padStart(7) + ' |' + row.trashTtk.toFixed(2).padStart(9) + ' |' +
     String(Math.round(eliteHp)).padStart(7) + ' |' + row.eliteTtk.toFixed(2).padStart(7) + ' |' +
     String(Math.round(bHp)).padStart(8) + ' |' + row.bossTtk.toFixed(1).padStart(7) + ' |' +
-    String(Math.round(taken)).padStart(13) + ' |' + hits.toFixed(1).padStart(11) + ' | ' + diff.name);
-}
+    String(Math.round(taken)).padStart(13) + ' |' + hits.toFixed(1).padStart(11));
+});
 
 /* ---- 判定：曲线是否平滑、是否落在可玩区间 ---- */
 let bad = 0;
 const check = (cond, msg) => { if (!cond) { console.log('  ! ' + msg); bad++; } };
+/* 平滑度检查要按怪物等级递增来比较（采样点是按难度排的，等级并不单调） */
+const byMlvl = rows.slice().sort((a, b) => a.mlvl - b.mlvl);
 let prev = null;
-rows.forEach((r) => {
+byMlvl.forEach((r) => {
   const dps = Math.max(r.basic, r.skill);
   if (r.mlvl >= 8) {
     check(r.trashTtk > 0.1 && r.trashTtk < 4, 'mlvl ' + r.mlvl + ' 小怪击杀 ' + r.trashTtk.toFixed(2) + 's（目标 0.1-4）');
@@ -113,7 +129,7 @@ rows.forEach((r) => {
     check(r.bossTtk > 5 && r.bossTtk < 95, 'mlvl ' + r.mlvl + ' BOSS 击杀 ' + r.bossTtk.toFixed(1) + 's（目标 5-95）');
     check(r.hits > 3 && r.hits < 45, 'mlvl ' + r.mlvl + ' 可承受 ' + r.hits.toFixed(1) + ' 次小怪攻击（目标 3-45）');
   }
-  if (prev) {
+  if (prev && r.mlvl - prev.mlvl >= 6) {
     const jump = Math.max(dps / prev.dps, prev.dps / dps);
     check(jump < 2.6, 'mlvl ' + prev.mlvl + '→' + r.mlvl + ' 伤害跳变 ' + jump.toFixed(2) + 'x（应 < 2.6x）');
   }

@@ -37,6 +37,7 @@
     this.area = 'dungeon';     // 'dungeon' | 'town'
     this.townMap = null;       // 缓存的城镇地图
     this.lastTownAt = 0;
+    this.floorCache = null;    // 当前层深渊的快照（只保留一层）
 
     this.monsters = [];
     this.projectiles = [];
@@ -85,7 +86,7 @@
     this.enterTown({ first: true, silent: true });
     if (G.UI.game === this) G.UI.onNewPlayer();
     this.log('欢迎来到暗影深渊。你在余烬营地醒来 —— 深渊之门就在营地南侧。', 'c-rare');
-    this.log('提示：走近 NPC 按 F 交谈；站上深渊之门按 F 进入地牢。', 'dim');
+    this.log('提示：走近 NPC 按 ' + G.Settings.actionLabel('pickup', 'F') + ' 交谈；站上深渊之门按 ' + G.Settings.actionLabel('pickup', 'F') + ' 进入地牢。', 'dim');
     this.save();
   };
 
@@ -95,6 +96,7 @@
     this.props = []; this.particles = []; this.texts = []; this.fx = [];
     this.floor = 1; this.diffIdx = 0; this.started = false;
     this.area = 'town'; this.townMap = null;
+    this.floorCache = null;
     G.UI.showStart();
     G.UI.buildStart(this);
   };
@@ -178,6 +180,7 @@
     }
     const left = this.pickups.filter((pk) => pk.item && pk.item.cat === 'equip').length;
     if (left) this.log('你离开了地牢，地上遗留的 ' + left + ' 件装备被深渊吞没了。', 'dim');
+    this.floorCache = this.serializeFloor();      // 记住这一层，回来时原样恢复
     this.enterTown({});
     return true;
   };
@@ -196,7 +199,129 @@
   /* ============================================================
    *  楼层
    * ============================================================ */
-  Game.prototype.enterFloor = function (floor) {
+  /* ============================================================
+   *  当前层的深渊缓存
+   *  ------------------------------------------------------------
+   *  只保留「当前这一层」：回城 / 刷新页面后再进同一层，怪物、掉落、
+   *  已破坏的物件与探索进度都会原样恢复；一旦进入别的层数，旧缓存作废。
+   * ============================================================ */
+  const u8ToStr = (arr) => {
+    let s = '';
+    for (let i = 0; i < arr.length; i++) s += String.fromCharCode(arr[i]);
+    return s;
+  };
+  const strToU8 = (s, len) => {
+    const out = new Uint8Array(len);
+    for (let i = 0; i < len && i < s.length; i++) out[i] = s.charCodeAt(i) & 255;
+    return out;
+  };
+
+  Game.prototype.serializeFloor = function () {
+    if (this.area !== 'dungeon' || !this.map || !this.player) return null;
+    const m = this.map;
+    const p = this.player;
+    return {
+      floor: this.floor, diffIdx: this.diffIdx, mlvl: this.mlvl,
+      map: {
+        w: m.w, h: m.h, floor: m.floor, isBoss: m.isBoss,
+        tiles: u8ToStr(m.tiles), variant: u8ToStr(m.variant),
+        rooms: m.rooms, corridors: m.corridors, torches: m.torches, decor: m.decor,
+        wallTiles: m.wallTiles, spawns: m.spawns,
+        playerStart: m.playerStart, stairs: m.stairs, stairsRoom: m.stairsRoom || null,
+        arena: m.arena || null, bossPos: m.bossPos || null, townPortal: m.townPortal || null,
+        area: 'dungeon', totalMonsters: this.totalMonsters,
+      },
+      state: {
+        killed: this.killed, totalMonsters: this.totalMonsters,
+        portalOpen: this.portalOpen, bossAlive: this.bossAlive,
+        playerX: p.x, playerY: p.y, life: p.life, mana: p.mana,
+      },
+      monsters: this.monsters.map((mo) => {
+        const o = Object.assign({}, mo);
+        delete o.def;
+        o.defId = mo.id;
+        o.dots = (mo.dots || []).map((d) => Object.assign({}, d));
+        return o;
+      }),
+      props: this.props.map((pr) => ({ x: pr.x, y: pr.y, type: pr.type, hp: pr.hp, r: pr.r, broken: !!pr.broken })),
+      pickups: this.pickups.map((pk) => ({ x: pk.x, y: pk.y, item: pk.item, bob: pk.bob, life: pk.life, r: pk.r })),
+      explored: u8ToStr(this.explored || new Uint8Array(m.w * m.h)),
+    };
+  };
+
+  Game.prototype.restoreFloor = function (cache) {
+    if (!cache || !cache.map) return false;
+    const m = cache.map;
+    m.tiles = strToU8(m.tiles, m.w * m.h);
+    m.variant = strToU8(m.variant, m.w * m.h);
+    m.area = 'dungeon';
+    this.area = 'dungeon';
+    this.floor = cache.floor;
+    this.diffIdx = G.clamp(cache.diffIdx | 0, 0, D.MAX_DIFF);
+    this.mlvl = cache.mlvl || G.mlvlOf(this.floor, this.diffIdx);
+    this.map = m;
+
+    this.explored = strToU8(cache.explored || '', m.w * m.h);
+    const st = cache.state || {};
+    this.killed = st.killed | 0;
+    this.totalMonsters = st.totalMonsters | 0;
+    this.portalOpen = !!st.portalOpen;
+    this.portalOpenAt = 0;
+    this.phoenixUsed = false;
+    this.bossAlive = !!st.bossAlive;
+    this.autosaveTimer = 0;
+
+    this.monsters = (cache.monsters || []).map((saved) => {
+      const mo = Object.assign({}, saved);
+      mo.def = D.defById ? D.defById(mo.defId) : null;
+      delete mo.defId;
+      if (!mo.def) return null;
+      mo.dots = mo.dots || [];
+      if (mo.slow === undefined) mo.slow = null;
+      return mo;
+    }).filter(Boolean);
+    this.props = (cache.props || []).map((pr) => ({
+      kind: 'prop', x: pr.x, y: pr.y, type: pr.type, hp: pr.hp == null ? 1 : pr.hp,
+      r: pr.r || 12, broken: !!pr.broken, hitFlash: 0,
+    }));
+    this.pickups = (cache.pickups || []).map((pk) => ({
+      kind: 'pickup', x: pk.x, y: pk.y, item: pk.item, bob: pk.bob || 0, life: pk.life || 600, r: pk.r || 10,
+    }));
+    this.projectiles = [];
+    this.grounds = [];
+    this.particles = [];
+    this.texts = [];
+    this.fx = [];
+
+    const p = this.player;
+    if (p) {
+      p.x = st.playerX != null ? st.playerX : m.playerStart.x;
+      p.y = st.playerY != null ? st.playerY : m.playerStart.y;
+      p.moveTarget = null; p.attackTarget = null; p.pendingPickup = null; p.pendingNpc = null;
+      p.aimAttack = false; p.forceAim = false; p.jump = null;
+      p.invuln = 1.2;
+      p.dots = [];
+      if (st.life != null) p.life = Math.min(p.stats.maxLife, Math.max(1, st.life));
+      if (st.mana != null) p.mana = Math.min(p.stats.maxMana, Math.max(0, st.mana));
+    }
+    return true;
+  };
+
+  Game.prototype.enterFloor = function (floor, opts) {
+    opts = opts || {};
+    /* 同一层且有缓存 → 原样恢复（回城再回来 / 刷新页面） */
+    const cache = opts.ignoreCache ? null : this.floorCache;
+    if (cache && cache.floor === floor && !opts.fresh) {
+      if (this.restoreFloor(cache)) {
+        this.floorCache = cache;
+        this.log('回到深渊第 ' + floor + ' 层，这里的一切都还在。', 'c-rare');
+        G.audio.play('portal');
+        if (G.UI.game === this) { G.UI.anchor = null; G.UI.onAreaChanged(); }
+        this.save();
+        return;
+      }
+    }
+    this.floorCache = null;           // 换了层数 → 旧缓存作废
     this.area = 'dungeon';
     this.floor = floor;
     if (this.player) this.player.maxFloor = Math.max(this.player.maxFloor || 1, floor);
@@ -280,14 +405,14 @@
     if (this.map && this.map.isBoss) {
       if (!this.bossAlive) {
         this.openPortal();
-        this.log('BOSS 已被击败！传送门已在附近开启，按 F 进入下一层。', 'c-rare');
+        this.log('BOSS 已被击败！传送门已在附近开启，按 ' + G.Settings.actionLabel('pickup', 'F') + ' 进入下一层。', 'c-rare');
       }
       return;
     }
     const need = Math.ceil(this.totalMonsters * 0.8);
     if (this.killed >= need) {
       this.openPortal();
-      this.log('怪物已被清除，传送门已在附近开启，按 F 进入下一层。', 'c-rare');
+      this.log('怪物已被清除，传送门已在附近开启，按 ' + G.Settings.actionLabel('pickup', 'F') + ' 进入下一层。', 'c-rare');
     }
   };
 
@@ -325,7 +450,7 @@
     const p = this.player;
     this.log('★ 你击败了 ' + m.name + '！', 'c-unique');
     // 大幅奖励
-    const drops = L.rollDrops(this.rng, { mlvl: this.mlvl + 6, mf: p.stats.mf + 120, gf: p.stats.gf, plvl: p.level + 2, kind: 'boss', mult: 2.4, cls: p.cls, orbBonus: G.Town.orbBonus(p), shardBonus: G.Town.shardBonus(p) });
+    const drops = L.rollDrops(this.rng, { mlvl: this.mlvl + 6, mf: p.stats.mf + 120, gf: p.stats.gf, plvl: p.level + 2, kind: 'boss', mult: 2.4, cls: p.cls, floor: this.floor, diffQuality: D.diffOf(this.diffIdx).quality, orbBonus: G.Town.orbBonus(p), shardBonus: G.Town.shardBonus(p) });
     this.dropLoot(m.x, m.y, drops);
     for (let i = 0; i < 3; i++) this.dropLoot(m.x, m.y, [L.makeGem(this.rng, this.mlvl + 10)]);
     p.potions.life.count += 2;
@@ -333,18 +458,49 @@
     p.life = p.stats.maxLife;
     p.mana = p.stats.maxMana;
     G.FX.nova(this, m.x, m.y, 240, '#ffe45c', 1.0);
-    // 难度提升
-    if (this.diffIdx < D.DIFFICULTIES.length - 1) {
-      this.diffIdx++;
-      const diff = D.diffOf(this.diffIdx);
-      this.log('☠ 难度提升至【' + diff.name + '】！怪物更强，掉落更好。', 'c-boss');
-      G.FX.nova(this, p.x, p.y, 200, diff.color, 0.9);
+    /* 难度不再自动提升：在当前难度打下「下一个 5 的倍数层」的领主才解锁下一档 */
+    if (!p.diffCleared) p.diffCleared = {};
+    const prev = p.diffCleared[this.diffIdx] | 0;
+    if (this.floor > prev) p.diffCleared[this.diffIdx] = this.floor;
+    const next = this.diffIdx + 1;
+    if (next <= D.MAX_DIFF) {
+      const need = D.diffUnlock(next);
+      if ((p.diffCleared[this.diffIdx] | 0) >= need.floor && (p.diffUnlocked | 0) < next) {
+        p.diffUnlocked = next;
+        const nd = D.diffOf(next);
+        this.log('☠ 已解锁新难度【' + nd.name + '】！去深渊之门选择它，怪物更强、掉落更好。', 'c-boss');
+        G.FX.nova(this, p.x, p.y, 200, nd.color, 0.9);
+      } else if ((p.diffCleared[this.diffIdx] | 0) < need.floor) {
+        this.log('继续深入：在本难度击败第 ' + need.floor + ' 层的领主即可解锁【' + D.diffOf(next).name + '】。', 'dim');
+      }
     } else {
-      this.log('湮灭难度下，深渊将无限延伸……', 'c-unique');
+      this.log('已在最高难度，深渊将无限延伸……', 'c-unique');
     }
     this.portalOpen = true;
     this.movePortalNearPlayer();
     this.save();
+  };
+
+  /* 某一档难度是否已解锁（存档进度，与当前选择无关） */
+  Game.prototype.diffUnlockedAt = function (idx) {
+    const p = this.player;
+    if (idx <= 0) return true;
+    return (p.diffUnlocked | 0) >= idx;
+  };
+  /* 已解锁的最高难度（用于界面显示与选择上限） */
+  Game.prototype.maxUnlockedDiff = function () {
+    return G.clamp(this.player.diffUnlocked | 0, 0, D.MAX_DIFF);
+  };
+  /* 切换当前难度（只在城镇、未进本时允许）。换难度会让缓存的那层数值不再匹配，直接作废 */
+  Game.prototype.setDiff = function (idx) {
+    const p = this.player;
+    const want = G.clamp(idx | 0, 0, D.MAX_DIFF);
+    if (want > this.maxUnlockedDiff()) return { ok: false, why: '尚未解锁' };
+    if (this.diffIdx === want) return { ok: true, same: true };
+    this.diffIdx = want;
+    this.floorCache = null;
+    this.mlvl = G.mlvlOf(this.floor, this.diffIdx);
+    return { ok: true };
   };
 
   Game.prototype.onPlayerDeath = function () {
@@ -458,7 +614,10 @@
     if (!G.UI.addToInv(it)) { this.pickups.splice(i, 0, pk); return false; }
     if (it.cat === 'gem') {
       G.audio.play('loot');
-      G.log('拾取 ' + it.name, 'c-magic');
+      G.log('拾取 [宝石] ' + L.displayName(it), 'c-gem');
+    } else if (it.cat === 'orb') {
+      G.audio.play('loot');
+      G.log('拾取 [通货] ' + L.displayName(it), 'c-orb');
     } else {
       G.audio.play(it.rarity === 'unique' || it.rarity === 'rare' ? 'lootRare' : 'loot');
       const cls = 'c-' + it.rarity;
@@ -605,6 +764,7 @@
       cls: p.cls, level: p.level, xp: p.xp, gold: p.gold, shards: p.shards || 0,
       alloc: p.alloc, passives: p.passives, skills: p.skills, skillBranches: p.skillBranches || {},
       guideMet: !!p.guideMet,
+      diffUnlocked: p.diffUnlocked | 0, diffCleared: p.diffCleared || {},
       skillPoints: p.skillPoints, attrPoints: p.attrPoints, passivePoints: p.passivePoints || 0,
       potions: p.potions, inventory: p.inventory, gear: p.gear,
       stash: p.stash || [], town: p.town || G.Town.defaultTown(),
@@ -613,6 +773,7 @@
       maxFloor: p.maxFloor || 1,
       life: p.life, mana: p.mana,
       area: this.area,
+      floorCache: this.area === 'dungeon' ? this.serializeFloor() : (this.floorCache || null),
     };
     return G.storage.save(data, this.slot);
   };
@@ -631,6 +792,8 @@
     p.skills = Object.assign(p.skills, data.skills || {});
     p.skillBranches = data.skillBranches || {};
     p.guideMet = !!data.guideMet;
+    p.diffUnlocked = G.clamp(data.diffUnlocked | 0, 0, D.MAX_DIFF);
+    p.diffCleared = data.diffCleared || {};
     p.potions = data.potions || p.potions;
     p.town = Object.assign(G.Town.defaultTown(), data.town || {});
     p.town.buildings = Object.assign(G.Town.defaultTown().buildings, (data.town && data.town.buildings) || {});
@@ -667,12 +830,14 @@
     if (data.life != null) p.life = Math.min(p.stats.maxLife, data.life);
     if (data.mana != null) p.mana = Math.min(p.stats.maxMana, data.mana);
     this.started = true;
+    /* 只保留当前层的缓存：层数对得上才用 */
+    this.floorCache = (data.floorCache && data.floorCache.floor === this.floor) ? data.floorCache : null;
     if (data.area === 'town') {
       this.enterTown({ silent: true });
       this.log('读档成功：' + G.DATA.classById(p.cls).name + ' Lv.' + p.level + '（余烬营地）', 'c-rare');
     } else {
-      this.enterFloor(this.floor);
-      this.log('读档成功：第 ' + this.floor + " 层，等级 " + p.level, 'c-rare');
+      this.enterFloor(this.floor, this.floorCache ? {} : { fresh: true });
+      this.log('读档成功：第 ' + this.floor + ' 层，等级 ' + p.level, 'c-rare');
     }
     if (G.UI.game === this) {
       G.UI.buildSkillbar();

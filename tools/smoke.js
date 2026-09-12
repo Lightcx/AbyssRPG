@@ -135,7 +135,7 @@ globalThis.document = {
 };
 
 /* ---------------- 加载游戏脚本 ---------------- */
-const files = ['core.js', 'data.js', 'loot.js', 'stats.js', 'dungeon.js', 'town.js', 'combat.js', 'entities.js', 'render.js', 'ui.js', 'game.js', 'main.js'];
+const files = ['core.js', 'data.js', 'loot.js', 'stats.js', 'dungeon.js', 'town.js', 'combat.js', 'entities.js', 'render.js', 'filter.js', 'ui.js', 'game.js', 'main.js'];
 files.forEach((f) => {
   const p = path.join(__dirname, '..', 'js', f);
   if (!fs.existsSync(p)) throw new Error('缺少文件: ' + p);
@@ -387,10 +387,13 @@ ok(p.gold > goldBefore, '出售装备获得金币');
 report('商店买入/卖出正常');
 
 // 排序 & 一键出售
+const junkBefore = p.inventory.filter(Boolean).length;
 for (let i = 0; i < 10; i++) p.inventory[i] = G.Loot.makeItem(rng, { ilvl: 20, rarity: 'common' });
 G.UI.sellJunk();
 G.UI.sortInventory();
-ok(true, '整理/一键出售无异常');
+ok(p.inventory.length === 60 && p.inventory.filter(Boolean).length < junkBefore + 10,
+  '一键出售清掉了普通装备（' + junkBefore + ' + 10 → ' + p.inventory.filter(Boolean).length + '）');
+ok(p.inventory.every((it) => !it || it.rarity), '整理后背包里都是完整的物品');
 report('背包整理与一键出售正常');
 
 /* ============================================================ */
@@ -408,7 +411,10 @@ const diffBefore = game.diffIdx;
 // 打死 BOSS
 G.Combat.hitMonster(game, boss, { physical: boss.maxLife * 10 }, { source: 'player' });
 ok(boss.dead, 'BOSS 被击杀');
-ok(game.diffIdx === diffBefore + 1, '击杀 BOSS 后难度提升', diffBefore + ' → ' + game.diffIdx);
+/* 难度不再自动提升：改为「在本难度打下 5 的倍数层」解锁下一档 */
+ok(game.diffIdx === diffBefore, '击杀 BOSS 不再自动提升难度', diffBefore + ' → ' + game.diffIdx);
+ok((game.player.diffCleared[game.diffIdx] | 0) >= 5, '击杀 BOSS 会记录本难度的最深层数',
+  JSON.stringify(game.player.diffCleared));
 ok(game.phoenixUsed === false, '不死鸟标记已重置');
 // 拾取全部掉落
 for (let i = 0; i < 60 && game.pickups.length; i++) game.collectPickup(game.pickups[0]);
@@ -559,7 +565,8 @@ g4.player = G.ENT.makePlayer(g4, 'sorc');
 g4.started = true;
 g4.diffIdx = 4;
 g4.enterFloor(45);
-ok(g4.mlvl > 60, '高层怪物等级', g4.mlvl);
+ok(g4.mlvl > 50, '高层怪物等级', g4.mlvl);
+ok(g4.mlvl === G.mlvlOf(45, 4), '怪物等级 = 层数为主 + 难度少量加成', g4.mlvl + ' vs ' + G.mlvlOf(45, 4));
 let deepErr = 0, deepFrames = 0;
 for (let f = 0; f < 1800; f++) {
   try {
@@ -1061,7 +1068,7 @@ section('14. 做装通货（Orbs）');
   res = G.Loot.applyOrb(oRng, white, 'drill');
   ok(res.ok && white.sockets === sok0 + 1 && white.gems.length === white.sockets, '钻孔石 +1 孔位', white.sockets);
   for (let i = 0; i < 6; i++) G.Loot.applyOrb(oRng, white, 'drill');
-  ok(white.sockets === 4, '孔位上限为 4', white.sockets);
+  ok(white.sockets === G.Loot.socketMax(white), '孔位达到该部位上限', white.sockets + ' / ' + G.Loot.socketMax(white));
   ok(!G.Loot.canUseOrb(white, 'drill').ok, '孔位满时无法继续钻孔');
 
   /* 传说石 */
@@ -1069,6 +1076,12 @@ section('14. 做装通货（Orbs）');
   ok(res.ok && white.power && white.rarity === 'unique', '传说石：黄装 → 传奇特效', white.power);
   ok(!!G.DATA.POWER_TEXT[white.power], '传奇特效有对应文本');
   ok(!G.Loot.canUseOrb(white, 'chaos').ok, '传奇装备不能再使用混沌石');
+  // 传说石可以重复使用：换一条暗金特效（刷新）
+  const pw0 = white.power;
+  ok(G.Loot.canUseOrb(white, 'legend').ok, '已注入暗金特效的装备可以再用传说石');
+  res = G.Loot.applyOrb(oRng, white, 'legend');
+  ok(res.ok && white.power && white.power !== pw0, '重复使用会刷新成另一条暗金特效', pw0 + ' → ' + white.power);
+  ok(res.lines.join('').indexOf('刷新暗金特效') >= 0, '日志写明是「刷新」而不是「获得」');
 
   /* 净化石 */
   const blue2 = G.Loot.makeItem(oRng, { ilvl: 30, slot: 'helm', rarity: 'magic', cls: 'sorc' });
@@ -1154,10 +1167,13 @@ section('15. 词缀数值 / 档位显示 & 分解');
   // 武器基础数值区间显示：本身有浮动值的基底 → 「最低段 - 最高段」
   const w = G.Loot.makeItem(rng3, { ilvl: 50, slot: 'weapon' });
   const wHtml = G.Loot.tooltipHTML(w, null, {});
-  ok(wHtml.indexOf('上限') < 0, '武器提示不再出现“上限”字样');
+  const baseLine = (wHtml.match(/class="tstat base">[\s\S]*?<\/div>/) || [''])[0];
+  ok(baseLine.indexOf('上限') < 0, '基础数值那一行不再出现「上限」字样', baseLine.replace(/<[^>]*>/g, ' ').trim());
   ok(!!w.baseCap && w.baseCap.min >= w.min, '装备带有基础数值上限');
-  const wFloor = G.Loot.baseFloor(w);
-  const wantRange = G.Loot.baseRangeText(w);
+  // 区间要算上装备自身的伤害加成（dmgPct / physDmg），和提示框保持一致
+  const wAll = G.Stats.itemStats(w);
+  const wBonus = 1 + (wAll.dmgPct || 0) / 100 + (wAll.physDmg || 0) / 100;
+  const wantRange = G.Loot.baseRangeText(w, wBonus);
   const shownRange = (wHtml.match(/class="arng"[^>]*>([^<]*)</) || [])[1];
   ok(shownRange === wantRange, '武器伤害显示为区间「' + wantRange + '」', shownRange);
   ok(/^\d+-\d+ - \d+-\d+$/.test(shownRange || ''), '区间是“两段浮动值”的写法（如 7-9 - 10-12）', shownRange);
@@ -1207,18 +1223,16 @@ section('15b. 前缀 / 后缀体系');
   /* ---- 词缀归类：属性/进攻/技能 → 前缀；抗性/速度/收益/回复 → 后缀 ---- */
   const kindOf = (id) => (G.DATA.affixById[id] || {}).kind;
   const inPrefix = { p_str: '力量', p_vit: '体力', p_crit: '暴击率', p_critDmg: '暴击伤害', p_skill: '技能等级', p_allSkills: '所有技能等级', p_armor: '护甲', p_armorPct: '护甲%' };
-  Object.keys(inPrefix).forEach((id) => {
-    ok(kindOf(id) === 'prefix', inPrefix[id] + ' 属于前缀', id + '=' + kindOf(id));
-  });
   const inSuffix = {
     s_allResist: '全抗', s_fireRes: '火抗', s_coldRes: '冰抗', s_lightRes: '电抗', s_poisonRes: '毒抗',
     s_moveSpeed: '移速', s_aps: '攻速', s_xp: '经验获取', s_mf: '魔法装备掉落', s_gf: '金币掉落',
     s_dmgReduce: '受到伤害降低', s_lifeRegen: '每秒生命回复', s_manaRegen: '每秒法力回复',
     s_manaSteal: '法力偷取', s_lifeSteal: '生命偷取',
   };
-  Object.keys(inSuffix).forEach((id) => {
-    ok(kindOf(id) === 'suffix', inSuffix[id] + ' 属于后缀', id + '=' + kindOf(id));
-  });
+  const wrongKind = Object.keys(inPrefix).filter((id) => kindOf(id) !== 'prefix')
+    .concat(Object.keys(inSuffix).filter((id) => kindOf(id) !== 'suffix'));
+  ok(wrongKind.length === 0, '属性 / 进攻 / 技能类词缀是前缀，抗性 / 速度 / 收益 / 回复类是后缀',
+    wrongKind.join(' '));
 
   /* ---- 已按需求移除的词缀 ---- */
   const removed = {
@@ -1227,9 +1241,8 @@ section('15b. 前缀 / 后缀体系');
     s_castSpeed: '独立的施法速度词缀', s_lifeOnHit: '击中回复生命', s_manaOnKill: '击杀回复法力',
     s_resist: '重复的全抗词缀',
   };
-  Object.keys(removed).forEach((id) => {
-    ok(!G.DATA.affixById[id], removed[id] + ' 已移除（' + id + '）');
-  });
+  const stillThere = Object.keys(removed).filter((id) => G.DATA.affixById[id]);
+  ok(stillThere.length === 0, '已按要求移除的词缀都不存在了', stillThere.map((id) => removed[id]).join('、'));
   ok(!G.DATA.STATS.castSpeed && !G.DATA.STATS.manaOnKill, '施法速度 / 击杀回蓝属性已移除');
   ok(!!G.DATA.STATS.manaSteal, '新增法力偷取属性');
 
@@ -2111,15 +2124,15 @@ section('16g. 对比窗口竖线 & 孔位菱形标识');
   ok(G.UI.socketsHTML(zero) === '', '无孔装备不显示孔位标识');
   ok(G.UI.cellInner(zero).indexOf('sockets') < 0, '无孔装备的格子里没有孔位标记');
 
-  // 一孔一个菱形
+  // 一孔一个菱形，并标注「孔位 已镶嵌 / 总数」
+  const sockBad = [];
   [1, 2, 3, 4].forEach((n) => {
     const it = G.Loot.makeItem(g2.rng, { ilvl: 40, slot: 'chest', rarity: 'rare' });
     it.sockets = n; it.gems = new Array(n).fill(null);
     const html = G.UI.socketsHTML(it);
-    ok((html.match(/<i /g) || []).length === n, n + ' 孔 → ' + n + ' 颗菱形',
-      (html.match(/<i /g) || []).length + ' 个');
-    ok(html.indexOf('孔位 0 / ' + n) >= 0, '提示文本显示孔位数量', '孔位 0 / ' + n);
+    if ((html.match(/<i /g) || []).length !== n || html.indexOf('孔位 0 / ' + n) < 0) sockBad.push(n + ' 孔');
   });
+  ok(sockBad.length === 0, '1-4 孔各渲染对应数量的菱形，并标注孔位数量', sockBad.join('、'));
 
   // 已镶嵌的菱形带宝石颜色
   const gemmed = G.Loot.makeItem(g2.rng, { ilvl: 40, slot: 'chest', rarity: 'rare' });
@@ -2188,14 +2201,13 @@ section('16h. 技能强化分支：数据、解锁、互斥与生效');
   /* ---- 数据完整性 ---- */
   ok(JSON.stringify(D.SKILL_TIERS) === JSON.stringify([5, 10, 15, 20, 25]), '分支档位为 5/10/15/20/25',
     D.SKILL_TIERS.join('/'));
-  let totalBr = 0, dup = {}, badMod = [];
+  let totalBr = 0, dup = {}, badMod = [], badBr = [];
   Object.keys(D.SKILLS).forEach((sid) => {
     const tree = D.skillBranches(sid);
-    ok(!!tree, sid + ' 有强化分支数据');
     D.SKILL_TIERS.forEach((t) => {
       const want = t === 25 ? 3 : 2;
-      const list = tree[t];
-      ok(list && list.length === want, sid + ' ' + t + ' 级有 ' + want + ' 个分支', list ? list.length : 0);
+      const list = tree && tree[t];
+      if (!list || list.length !== want) badBr.push(sid + ' ' + t + ' 级=' + (list ? list.length : 'x'));
       (list || []).forEach((b) => {
         totalBr++;
         if (dup[b.id]) ok(false, '分支 id 重复：' + b.id);
@@ -2205,8 +2217,8 @@ section('16h. 技能强化分支：数据、解锁、互斥与生效');
       });
     });
   });
-  ok(totalBr === Object.keys(D.SKILLS).length * 11, '每个技能 11 个分支，共 ' + totalBr + ' 个',
-    totalBr + ' 个');
+  ok(badBr.length === 0, '每个技能 5/10/15/20 级各 2 个分支、25 级 3 个（共 ' + totalBr + ' 个）', badBr.join('、'));
+  ok(totalBr === Object.keys(D.SKILLS).length * 11 && totalBr > 0, '每个技能 11 个分支，共 ' + totalBr + ' 个');
   ok(badMod.length === 0, '所有修饰符都有可读的说明文本', badMod.join(','));
   ok(Object.keys(D.SKILLS).every((k) => D.SKILLS[k].maxLevel === 25), '技能等级上限提升到 25');
 
@@ -2281,7 +2293,6 @@ section('16h. 技能强化分支：数据、解锁、互斥与生效');
   /* ---- 修饰符真的生效 ---- */
   const base = D.SKILLS[SID];
   const dmgOf = () => { const c = G.Combat.attackComponents(p3, base, 11); let t = 0; for (const k in c) t += c[k]; return t; };
-  const shapeBefore = S.skillShape(p3, base);
   // 先清掉 5 级分支，再加一个纯伤害分支（利刃 {dmg:18}）
   delete p3.skillBranches[SID][5];
   const dmgBefore = dmgOf();
@@ -2290,7 +2301,6 @@ section('16h. 技能强化分支：数据、解锁、互斥与生效');
   ok(dmgAfter > dmgBefore, '伤害分支提高了技能伤害', Math.round(dmgBefore) + ' → ' + Math.round(dmgAfter));
   ok(Math.abs(dmgAfter / dmgBefore - 1.18) < 0.02, '提升幅度与分支数值一致（+18%）',
     ((dmgAfter / dmgBefore - 1) * 100).toFixed(1) + '%');
-  ok(shapeBefore.radius !== undefined || true, '技能形态可计算');
 
   // 消耗 / 冷却 / 范围 / 数量
   const costBranch = D.skillBranches('barb_leap')[5][1];      // 轻装 {cost:-25}
@@ -2658,12 +2668,10 @@ section('16m. 深渊之门 / 深渊向导 职责分离与首次引导');
 
   /* ---- 引导要介绍其他 NPC 与整体玩法，且不打破第四面墙 ---- */
   const allText = G.Town.GUIDE_INTRO.join('');
-  ['布洛克', '维恩', '娜塔', '米尔', '加兹', '凯'].forEach((nm) => {
-    ok(allText.indexOf(nm) >= 0, '引导里提到了 NPC：' + nm);
-  });
-  ['深渊之门', '领主', '残晶', '宝石'].forEach((w) => {
-    ok(allText.indexOf(w) >= 0, '引导里讲了玩法要点：' + w);
-  });
+  const missNpc = ['布洛克', '维恩', '娜塔', '米尔', '加兹', '凯'].filter((nm) => allText.indexOf(nm) < 0);
+  ok(missNpc.length === 0, '引导里提到了城镇里的六位 NPC', missNpc.join('、'));
+  const missKey = ['深渊之门', '领主', '残晶', '宝石'].filter((w) => allText.indexOf(w) < 0);
+  ok(missKey.length === 0, '引导里讲了玩法要点（深渊之门 / 领主 / 残晶 / 宝石）', missKey.join('、'));
   const meta = ['按 F', '快捷键', '面板', '点击', '鼠标', '键盘', '按键', '存档', '界面'];
   const broke = meta.filter((w) => allText.indexOf(w) >= 0);
   ok(broke.length === 0, '引导不跳出世界观（没有操作/系统词汇）', broke.join('、'));
@@ -2881,7 +2889,7 @@ section('16k. 双手武器与副手互斥时的评分提示');
 function UI_clearUpCache() { G.UI._upCache = { sig: null, map: {} }; }
 
 /* ============================================================ */
-section('16l. 双手武器：2 倍数值与 8 孔');
+section('16l. 双手武器：2 倍数值与部位孔位上限');
 {
   const D = G.DATA, L = G.Loot;
   ok(D.TWO_HAND_MULT === 2, '双手武器倍率为 2', D.TWO_HAND_MULT);
@@ -2894,6 +2902,7 @@ section('16l. 双手武器：2 倍数值与 8 孔');
     const b = D.BASES.filter((x) => x.type === type && x.ilvl === D.TIER_ILVL[tier])[0];
     return (b.min + b.max) / 2 * b.aps;
   };
+  const badPair = [];
   [['greatsword', 'sword'], ['greataxe', 'axe'], ['staff', 'scepter'], ['bow', 'dagger'], ['crossbow', 'dagger']]
     .forEach((pair) => {
       let lo = 9, hi = 0;
@@ -2901,9 +2910,9 @@ section('16l. 双手武器：2 倍数值与 8 孔');
         const r = dpsOf(pair[0], t) / dpsOf(pair[1], t);
         lo = Math.min(lo, r); hi = Math.max(hi, r);
       }
-      ok(lo > 1.8 && hi < 2.25, pair[0] + ' 的 DPS 全程约为 ' + pair[1] + ' 的 2 倍',
-        lo.toFixed(2) + '× ~ ' + hi.toFixed(2) + '×');
+      if (!(lo > 1.8 && hi < 2.25)) badPair.push(pair[0] + ' ' + lo.toFixed(2) + '×~' + hi.toFixed(2) + '×');
     });
+  ok(badPair.length === 0, '双手武器基底的 DPS 全程约为同档单手的 2 倍', badPair.join(' '));
   // 法杖对魔杖（成长率略高，比例会随等级缓慢上浮）
   const staffWand = [0, 7].map((t) => dpsOf('staff', t) / dpsOf('wand', t));
   ok(staffWand[0] > 1.8 && staffWand[1] < 2.6, '法杖相对魔杖约 2 倍（高等级略高）',
@@ -2930,73 +2939,62 @@ section('16l. 双手武器：2 倍数值与 8 孔');
   ok(rTwo.over === rTwo.n && rTwo.n >= 3, '双手武器的词缀数值全部落在 2 倍区间内', rTwo.over + '/' + rTwo.n);
   ok(rOne.over === 0, '单手武器的词缀数值仍在 1 倍区间内');
 
-  /* ---- 孔位：单手 4、双手 8 ---- */
+  /* ---- 孔位上限：按部位区分，双手武器 = 主手 + 副手 ---- */
   const fakeTwo = { slot: 'weapon', two: true, ilvl: 60 };
   const fakeOne = { slot: 'weapon', two: false, ilvl: 60 };
-  ok(L.socketCap(fakeTwo) === 2 * L.socketCap(fakeOne), '双手武器的掉落孔位上限是单手的 2 倍',
-    L.socketCap(fakeOne) + ' → ' + L.socketCap(fakeTwo));
-  const offCap = L.socketMax({ slot: 'offhand', ilvl: 60 });
-  ok(L.socketMax(fakeTwo) === L.socketMax(fakeOne) + offCap,
-    '双手武器的孔位上限 = 单手武器上限 + 副手上限', L.socketMax(fakeOne) + ' + ' + offCap + ' = ' + L.socketMax(fakeTwo));
-  ok(L.socketMax(fakeTwo) === 8 && L.socketMax(fakeOne) === 4, '单手 4 孔 / 双手 8 孔');
+  ok(L.socketMax(fakeOne) === 2 && L.socketMax(fakeTwo) === 4, '主手 2 孔 / 双手武器 4 孔',
+    L.socketMax(fakeOne) + ' / ' + L.socketMax(fakeTwo));
+  ok(L.socketMax(fakeTwo) === L.socketMax(fakeOne) + L.socketMax({ slot: 'offhand', ilvl: 60 }),
+    '双手武器上限 = 主手上限 + 副手上限');
+  const caps = D.SOCKET_MAX;
+  ok(caps.offhand === 2 && caps.helm === 2 && caps.boots === 2 && caps.gloves === 2 && caps.belt === 2,
+    '副手 / 头盔 / 靴子 / 手套 / 腰带 都是 2 孔', JSON.stringify(caps));
+  ok(caps.chest === 3, '胸甲 3 孔', caps.chest);
+  ok(caps.ring === 1 && caps.amulet === 2, '戒指 1 孔 / 项链 2 孔');
+  const overCap = D.gearSlots().filter((s) => {
+    const it = { slot: s === 'ring1' || s === 'ring2' ? 'ring' : s, two: false, ilvl: 60 };
+    return L.socketMax(it) > 3;
+  });
+  ok(overCap.length === 0, '除双手武器外没有部位超过 3 孔', overCap.join(','));
 
   const drillItem = L.makeItem(rngT, { ilvl: 60, slot: 'weapon', baseId: 'w_greataxe_5', rarity: 'rare' });
   drillItem.sockets = 0; drillItem.gems = [];
   for (let i = 0; i < 12; i++) L.applyOrb(rngT, drillItem, 'drill');
-  ok(drillItem.sockets === 8, '双手武器最多能钻到 8 孔', drillItem.sockets);
-  ok(!L.canUseOrb(drillItem, 'drill').ok, '8 孔后无法继续钻孔');
+  ok(drillItem.sockets === 4, '双手武器最多能钻到 4 孔', drillItem.sockets);
+  ok(!L.canUseOrb(drillItem, 'drill').ok, '4 孔后无法继续钻孔');
   const drillOne = L.makeItem(rngT, { ilvl: 60, slot: 'weapon', baseId: 'w_sword_5', rarity: 'rare' });
   drillOne.sockets = 0; drillOne.gems = [];
   for (let i = 0; i < 12; i++) L.applyOrb(rngT, drillOne, 'drill');
-  ok(drillOne.sockets === 4, '单手武器仍然最多 4 孔', drillOne.sockets);
+  ok(drillOne.sockets === 2, '单手武器最多 2 孔', drillOne.sockets);
+  const drillRing = L.makeItem(rngT, { ilvl: 60, slot: 'ring', rarity: 'rare' });
+  drillRing.sockets = 0; drillRing.gems = [];
+  for (let i = 0; i < 6; i++) L.applyOrb(rngT, drillRing, 'drill');
+  ok(drillRing.sockets === 1, '戒指最多 1 孔', drillRing.sockets);
 
-  // 掉落时不会超过上限
-  let over = 0;
-  for (let i = 0; i < 400; i++) {
+  // 掉落时不会超过上限，且低等级装备开不满孔
+  let over = 0, lowFull = 0, highFull = 0;
+  for (let i = 0; i < 600; i++) {
     const it = L.makeItem(rngT, { ilvl: 1 + i % 90, rarity: 'rare' });
-    if (it.sockets > L.socketCap(it)) over++;
+    if (it.sockets > L.socketMax(it)) over++;
+    if (it.ilvl < 20 && it.sockets >= L.socketMax(it) && L.socketMax(it) > 1) lowFull++;
+    if (it.ilvl >= 55 && it.sockets >= L.socketMax(it)) highFull++;
   }
-  ok(over === 0, '掉落的孔位数不会超过该装备的上限', over);
+  ok(over === 0, '掉落的孔位数不会超过该部位上限', over);
+  ok(lowFull === 0, '低等级（ilvl<20）装备开不满孔', lowFull);
+  ok(highFull > 0, '高等级装备可以满孔', highFull);
 
-  /* ---- 图标上的菱形：上 4 下 4 ---- */
+  /* ---- 图标上的菱形：现在最多 4 孔，始终单排（数量 / filled 由 16g 覆盖） ---- */
   const six = L.makeItem(rngT, { ilvl: 60, slot: 'weapon', baseId: 'w_greataxe_5', rarity: 'rare' });
-  six.sockets = 6; six.gems = [{ gem: 'ruby', tier: 1 }, null, null, null, { gem: 'sapphire', tier: 2 }, null];
+  six.sockets = 4; six.gems = [{ gem: 'ruby', tier: 1 }, null, { gem: 'sapphire', tier: 2 }, null];
   const html6 = G.UI.socketsHTML(six);
-  ok(html6.indexOf('class="sockets top"') >= 0 && html6.indexOf('class="sockets bottom"') >= 0,
-    '双手武器 6 孔分成上下两排');
-  const topRow = html6.slice(html6.indexOf('sockets top'), html6.indexOf('sockets bottom'));
-  const botRow = html6.slice(html6.indexOf('sockets bottom'));
-  ok((topRow.match(/<i /g) || []).length === 4, '上排 4 颗菱形', (topRow.match(/<i /g) || []).length);
-  ok((botRow.match(/<i /g) || []).length === 2, '下排 2 颗菱形', (botRow.match(/<i /g) || []).length);
-  ok((html6.match(/class="filled"/g) || []).length === 2, '已镶嵌的菱形仍然是 filled');
-  ok((html6.match(/孔位 2 \/ 6/g) || []).length === 2, '上下两排都带孔位提示');
+  ok(html6.indexOf('sockets top') < 0 && html6.indexOf('sockets bottom') < 0, '4 孔仍然单排显示');
 
-  const four = L.makeItem(rngT, { ilvl: 60, slot: 'weapon', baseId: 'w_greataxe_5', rarity: 'rare' });
-  four.sockets = 4; four.gems = new Array(4).fill(null);
-  ok(G.UI.socketsHTML(four).indexOf('sockets top') < 0, '4 孔及以下仍然只显示一排');
-  const eight = L.makeItem(rngT, { ilvl: 60, slot: 'weapon', baseId: 'w_greataxe_5', rarity: 'rare' });
-  eight.sockets = 8; eight.gems = new Array(8).fill(null);
-  const html8 = G.UI.socketsHTML(eight);
-  const t8 = html8.slice(0, html8.indexOf('sockets bottom'));
-  const b8 = html8.slice(html8.indexOf('sockets bottom'));
-  ok((t8.match(/<i /g) || []).length === 4 && (b8.match(/<i /g) || []).length === 4, '8 孔 = 上 4 + 下 4');
-  ok(!G.UI.socketsSplit({ slot: 'offhand', two: false, sockets: 4 }), '副手不会分成两排');
+  // 提示框不再啰嗦地解释双手武器的倍率与孔位
+  const tipTwo = L.tooltipHTML(two, g8.player, {});
+  ok(tipTwo.indexOf('双手武器：占主手') < 0, '提示框不再重复说明双手武器规则');
+  ok(tipTwo.indexOf('孔位上限') < 0, '提示框不再写明孔位上限');
 
-  // 背包格子里也走同一套
-  const p8 = g8.player;
-  p8.inventory = new Array(60).fill(null);
-  p8.inventory[0] = six;
-  G.UI.dirty.inv = true;
-  G.UI.refreshInventory();
-  const cellH = G.el('inv-grid').children[0].innerHTML;
-  ok(cellH.indexOf('sockets top') >= 0 && cellH.indexOf('sockets bottom') >= 0, '背包格子渲染出上下两排菱形');
-
-  // 提示框说明双手武器的预算
-  const tipTwo = L.tooltipHTML(two, p8, {});
-  ok(tipTwo.indexOf('双手武器：占主手 + 副手两个位置') >= 0, '提示框说明双手武器的 2 倍预算');
-  ok(tipTwo.indexOf('孔位上限 8') >= 0, '提示框写明孔位上限 8');
-
-  report('双手武器的 2 倍数值与 8 孔校验通过');
+  report('双手武器的 2 倍数值与部位孔位上限校验通过');
 }
 
 /* ============================================================ */
@@ -3337,13 +3335,658 @@ section('18. 版本号与变更记录');
 }
 
 /* ============================================================ */
+section('19. Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / 技能收益 / 过滤器');
+{
+  const D = G.DATA, L = G.Loot, S = G.Stats;
+
+  /* ---------- 第 10 条：技能窗口显示升级收益 ---------- */
+  {
+    const g = new G.Game(90101);
+    G.GAME = g; G.UI.game = g;
+    g.player = G.ENT.makePlayer(g, 'barb');
+    const p = g.player;
+    p.level = 40; p.skillPoints = 20; p.skills.barb_rend = 6;
+    S.derive(p);
+    const sk = D.SKILLS.barb_rend;
+    const html = G.UI.skillGainHTML(p, sk, 6, 6);
+    ok(html.indexOf('投入下一点') >= 0, '技能窗口有「投入下一点」的收益行');
+    ok(html.indexOf('→') >= 0 && html.indexOf('基础伤害') >= 0, '显示基础伤害的当前 → 下一级', 
+      html.replace(/<[^>]*>/g, '').slice(0, 60));
+    ok(/\+[\d.]+%/.test(html), '给出提升百分比');
+    const before = G.UI.skillDamageAt(p, sk, 6);
+    const after = G.UI.skillDamageAt(p, sk, 7);
+    ok(after > before, '数值确实随等级提升', Math.round(before) + ' → ' + Math.round(after));
+    const maxed = G.UI.skillGainHTML(p, sk, sk.maxLevel, sk.maxLevel);
+    ok(maxed.indexOf('已满级') >= 0, '满级时提示已满级');
+    const locked = G.UI.skillGainHTML(Object.assign({}, p, { level: 1 }), D.SKILLS.barb_leap, 0, 0);
+    ok(locked.indexOf('需要角色等级') >= 0, '未达等级要求时提示需求');
+
+    // 渲染到窗口里
+    G.UI.openSkillWindow('barb_rend');
+    ok(G.el('sk-hstats').innerHTML.indexOf('skgain') >= 0, '技能窗口渲染出升级收益区块');
+    ok(G.el('sk-hstats').innerHTML.indexOf('投入下一点') >= 0, '窗口中能看到收益数字');
+    G.UI.togglePanel('panel-skill', false);
+    // 增益类技能（战吼）显示增益数值变化
+    const shout = D.SKILLS.barb_shout;
+    const sh = G.UI.skillGainHTML(p, shout, 3, 3);
+    ok(sh.indexOf('护甲') >= 0 && sh.indexOf('→') >= 0, '增益技能显示增益与护甲的变化');
+  }
+
+  /* ---------- 第 8 条：层数与难度分离 ---------- */
+  {
+    ok(D.DIFFICULTIES.length === 6, '难度共 6 档', D.DIFFICULTIES.length);
+    ok(D.DIFFICULTIES[1].name === '专家' && D.DIFFICULTIES[2].name === '噩梦', '难度顺序为 普通→专家→噩梦',
+      D.DIFFICULTIES.map((d) => d.name).join('→'));
+    ok(D.diffUnlock(1).floor === 5 && D.diffUnlock(1).diff === 0, '第 2 档需要在普通难度打第 5 层');
+    ok(D.diffUnlock(2).floor === 10 && D.diffUnlock(2).diff === 1, '第 3 档需要在专家难度打第 10 层');
+    ok(D.DIFFICULTIES.every((d) => typeof d.quality === 'number'), '每档难度都有掉落品质加成');
+
+    // 层数只提升怪物等级，难度只加一点点
+    const lv0 = G.mlvlOf(10, 0), lv5 = G.mlvlOf(10, 5);
+    ok(lv5 - lv0 <= 5, '难度对怪物等级的影响很小（层数才是主项）', lv0 + ' → ' + lv5);
+    ok(G.mlvlOf(20, 0) - G.mlvlOf(10, 0) > lv5 - lv0, '层数对怪物等级的影响远大于难度');
+
+    const g = new G.Game(90102);
+    G.GAME = g; G.UI.game = g;
+    g.player = G.ENT.makePlayer(g, 'barb');
+    const p = g.player;
+    p.level = 40; S.derive(p);
+    g.toDungeon(5);
+    ok(g.maxUnlockedDiff() === 0, '新角色只有普通难度', g.maxUnlockedDiff());
+    ok(g.setDiff(1).ok === false, '未解锁的难度不能选');
+    // 在普通难度击败第 5 层领主
+    const boss = g.monsters.filter((m) => m.isBoss)[0];
+    ok(boss && g.floor === 5, '第 5 层有领主', boss && boss.name);
+    const diffBefore = g.diffIdx;
+    G.Combat.killMonster(g, boss, true);
+    ok(g.diffIdx === diffBefore, '击杀领主不再自动提升难度', g.diffIdx);
+    ok(p.diffUnlocked === 1, '普通难度通关第 5 层 → 解锁专家', p.diffUnlocked);
+    ok(g.maxUnlockedDiff() === 1, '最高可选难度变成专家');
+    ok(g.setDiff(1).ok === true && g.diffIdx === 1, '可以切到专家难度');
+    ok(g.setDiff(2).ok === false, '噩梦仍未解锁');
+    ok(g.setDiff(0).ok === true, '可以切回普通');
+    g.setDiff(1);
+    // 专家难度打第 10 层领主
+    g.enterFloor(10);
+    const boss2 = g.monsters.filter((m) => m.isBoss)[0];
+    ok(boss2 && boss2.name === '焰喉', '专家难度第 10 层是焰喉', boss2 && boss2.name);
+    const hpNormal = (function () {
+      const tmp = new G.Game(1); tmp.player = G.ENT.makePlayer(tmp, 'barb'); tmp.diffIdx = 0; tmp.enterFloor(10);
+      const b = tmp.monsters.filter((m) => m.isBoss)[0];
+      return b.maxLife;
+    })();
+    ok(boss2.maxLife > hpNormal, '专家难度怪物血量更高', Math.round(hpNormal) + ' → ' + Math.round(boss2.maxLife));
+    G.Combat.killMonster(g, boss2, true);
+    ok(p.diffUnlocked === 2, '专家难度通关第 10 层 → 解锁噩梦', p.diffUnlocked);
+    // 存读档保留解锁进度
+    g.area = 'town'; g.save();
+    const g2 = new G.Game(1);
+    G.GAME = g2; G.UI.game = g2;
+    ok(g2.load(g.slot) === true, '读档成功');
+    ok((g2.player.diffUnlocked | 0) === 2, '难度解锁进度随存档保留', g2.player.diffUnlocked);
+    // 深渊之门面板里能选难度
+    G.GAME = g; G.UI.game = g;
+    UI_clearUpCache();
+    G.UI.dirty.rift = true;
+    G.UI.renderRift();
+    const cards = G.el('rift-diffs').children;
+    ok(cards.length === D.DIFFICULTIES.length, '深渊之门列出全部难度', cards.length + ' 张');
+    ok(cards.filter((c) => c.dataset.on === '1').length === 1, '只有一个难度被标为当前');
+    ok(cards[g.diffIdx].dataset.on === '1', '标出的正是当前难度', '当前 ' + g.diffIdx);
+    ok(cards.filter((c) => c.dataset.locked === '1').length === D.DIFFICULTIES.length - (p.diffUnlocked + 1),
+      '未解锁的难度标为锁定', cards.filter((c) => c.dataset.locked === '1').length + ' 个');
+  }
+
+  /* ---------- 第 9 条：掉落品质曲线 ---------- */
+  {
+    const sample = (floor, q, n) => {
+      const rng = G.RNG(777);
+      const out = { common: 0, magic: 0, rare: 0, unique: 0 };
+      for (let i = 0; i < n; i++) {
+        const st = L.rarityStage(floor, q);
+        out[L.rollRarity(rng, { ilvl: Math.round(1 + floor * 1.2), stage: st })]++;
+      }
+      return out;
+    };
+    const N = 4000;
+    const e = sample(5, 0, N);      // 前期
+    const m = sample(20, 1, N);     // 中期
+    const l = sample(45, 2, N);     // 后期
+    const x = sample(70, 3, N);     // 终盘
+    const pct = (o, k) => o[k] / N;
+    ok(pct(e, 'common') > 0.55, '前期以白装为主', (pct(e, 'common') * 100).toFixed(0) + '%');
+    ok(pct(e, 'unique') < 0.05, '前期暗金极少（惊喜掉落）', (pct(e, 'unique') * 100).toFixed(1) + '%');
+    ok(pct(m, 'magic') > pct(m, 'common') && pct(m, 'rare') > pct(e, 'rare'),
+      '中期蓝装为主、黄装变多', '白' + (pct(m, 'common') * 100).toFixed(0) + '% 蓝' + (pct(m, 'magic') * 100).toFixed(0) + '%');
+    ok(pct(l, 'rare') > 0.4, '后期黄装为主', (pct(l, 'rare') * 100).toFixed(0) + '%');
+    ok(pct(l, 'common') < 0.06, '后期基本不掉白装', (pct(l, 'common') * 100).toFixed(1) + '%');
+    ok(pct(x, 'rare') + pct(x, 'unique') > 0.85, '终盘以黄装与暗金为主',
+      ((pct(x, 'rare') + pct(x, 'unique')) * 100).toFixed(0) + '%');
+    ok(pct(x, 'unique') > pct(l, 'unique') && pct(l, 'unique') > pct(e, 'unique'),
+      '暗金率随进度提升', [e, l, x].map((o) => (pct(o, 'unique') * 100).toFixed(1) + '%').join(' → '));
+    // 阶段越高，黄装词缀越多（越接近满词缀）
+    const avgAffix = (floor, q) => {
+      const rng = G.RNG(31337);
+      let sum = 0, n = 0;
+      for (let i = 0; i < 300; i++) {
+        const it = L.makeItem(rng, { ilvl: Math.round(1 + floor * 1.2), rarity: 'rare', slot: 'chest', stage: L.rarityStage(floor, q) });
+        sum += it.affixes.length; n++;
+      }
+      return sum / n;
+    };
+    const a1 = avgAffix(5, 0), a2 = avgAffix(60, 4);
+    ok(a2 > a1, '阶段越高，黄装词缀越多', a1.toFixed(2) + ' → ' + a2.toFixed(2));
+    ok(a2 > 5.2, '终盘以多词缀黄装为主', a2.toFixed(2) + ' 条');
+    // 掉落入口把层数与难度品质传了下去
+    const g = new G.Game(5150);
+    G.GAME = g; G.UI.game = g;
+    g.player = G.ENT.makePlayer(g, 'barb');
+    g.player.level = 40; S.derive(g.player);
+    g.diffIdx = 4; g.enterFloor(60);
+    const drops = L.rollDrops(g.rng, { mlvl: g.mlvl, kind: 'elite', mult: 1, floor: g.floor, diffQuality: D.diffOf(g.diffIdx).quality, cls: 'barb' });
+    const eq = drops.filter((d) => d.cat === 'equip');
+    ok(eq.length > 0 && eq.every((it) => it.rarity !== 'common'), '高层高难度不掉白装',
+      eq.map((it) => it.rarity).join(','));
+  }
+
+  /* ---------- 第 6 条：深渊布局 ---------- */
+  {
+    let bad = [], totalCorr = 0, totalRooms = 0;
+    for (let floor = 1; floor <= 25; floor++) {
+      const rng = G.RNG(9000 + floor);
+      const m = G.Dungeon.generate(rng, { floor, diffIdx: Math.min(5, floor % 6) });
+      const rooms = m.rooms;
+      totalRooms += rooms.length;
+      totalCorr += m.corridors.length;
+      // 房间不重叠
+      for (let i = 0; i < rooms.length; i++) {
+        for (let j = i + 1; j < rooms.length; j++) {
+          const a = rooms[i], b = rooms[j];
+          if (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y) bad.push('第' + floor + '层房间重叠');
+        }
+      }
+      // 房间都在图内
+      rooms.forEach((r) => {
+        if (r.x < 1 || r.y < 1 || r.x + r.w > m.w - 1 || r.y + r.h > m.h - 1) bad.push('第' + floor + '层房间越界');
+      });
+      // 走廊数量与房间数同量级（不再是一堆乱路）
+      if (m.corridors.length > rooms.length * 2 + 3) bad.push('第' + floor + '层走廊过多 ' + m.corridors.length);
+      if (m.corridors.length < rooms.length - 1) bad.push('第' + floor + '层走廊过少 ' + m.corridors.length);
+      // 起点是角落房间，出口是离起点最远的房间
+      const st = m.rooms[0];
+      let cornerScore = 1e9;
+      rooms.forEach((r) => { cornerScore = Math.min(cornerScore, r.gx + r.gy); });
+      const startRoom = rooms.filter((r) => Math.abs(r.cx - (m.playerStart.x / 44)) < 1 && Math.abs(r.cy - (m.playerStart.y / 44)) < 1)[0];
+      if (startRoom && startRoom.gx + startRoom.gy !== cornerScore) bad.push('第' + floor + '层起点不在角落');
+      // 起点能被走到（对地板做一次洪泛，出口必须可达）
+      const idx = (x, y) => y * m.w + x;
+      const seen = new Uint8Array(m.w * m.h);
+      const sx = Math.round(m.playerStart.x / 44), sy = Math.round(m.playerStart.y / 44);
+      const ex = Math.round(m.stairs.x / 44), ey = Math.round(m.stairs.y / 44);
+      const q = [[sx, sy]];
+      seen[idx(sx, sy)] = 1;
+      while (q.length) {
+        const cur = q.pop();
+        const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+        for (let d = 0; d < dirs.length; d++) {
+          const nx = cur[0] + dirs[d][0], ny = cur[1] + dirs[d][1];
+          if (nx < 0 || ny < 0 || nx >= m.w || ny >= m.h) continue;
+          if (m.tiles[idx(nx, ny)] !== 1 || seen[idx(nx, ny)]) continue;
+          seen[idx(nx, ny)] = 1;
+          q.push([nx, ny]);
+        }
+      }
+      if (!seen[idx(ex, ey)]) bad.push('第' + floor + '层出口不可达');
+      // 所有房间中心都能走到
+      rooms.forEach((r) => { if (!seen[idx(r.cx, r.cy)]) bad.push('第' + floor + '层有房间走不到'); });
+    }
+    ok(bad.length === 0, '1-25 层布局：房间不重叠、全连通、出口可达', bad.slice(0, 3).join(' / '));
+    ok(totalCorr / totalRooms < 1.9, '走廊与房间数量比例合理（不是一堆乱路）',
+      (totalCorr / totalRooms).toFixed(2) + ' 条/间');
+  }
+
+  /* ---------- 第 7 条：只缓存当前层 ---------- */
+  {
+    const g = new G.Game(9090);
+    G.GAME = g; G.UI.game = g;
+    g.player = G.ENT.makePlayer(g, 'barb');
+    const p = g.player;
+    p.level = 40; S.derive(p);
+    g.toDungeon(7);
+    const monsters0 = g.monsters.length;
+    ok(monsters0 > 0, '第 7 层有怪物', monsters0);
+    // 制造一些「进度」：杀几只怪、砸个罐子、留一件掉落、把玩家挪个位置
+    for (let i = 0; i < 3; i++) if (g.monsters[i]) G.Combat.killMonster(g, g.monsters[i], true);
+    const killedNow = g.killed;
+    if (g.props.length) g.props[0].hp = 0;
+    g.dropLoot(p.x + 30, p.y, [L.makeItem(g.rng, { ilvl: 20, slot: 'ring' })]);
+    const pickups0 = g.pickups.length;
+    p.x += 40;
+    const px0 = p.x;
+    const cache = g.serializeFloor();
+    ok(cache && cache.floor === 7, '能序列化当前层', cache && cache.floor);
+    ok(typeof cache.map.tiles === 'string' && cache.map.tiles.length === g.map.w * g.map.h, '地图用紧凑字符串保存');
+
+    // 回城 → 再进同一层：原样恢复
+    g.toTown('portal');
+    ok(g.area === 'town', '回到城镇');
+    ok(g.floorCache && g.floorCache.floor === 7, '城镇里保留着第 7 层的缓存');
+    g.enterFloor(7);
+    ok(g.area === 'dungeon' && g.floor === 7, '重新进入第 7 层');
+    ok(g.monsters.length === monsters0, '怪物数量原样恢复', g.monsters.length + ' / ' + monsters0);
+    ok(g.killed === killedNow, '击杀进度恢复', g.killed);
+    ok(g.pickups.length === pickups0, '地上的掉落还在', g.pickups.length);
+    ok(Math.abs(g.player.x - px0) < 1, '玩家位置恢复', Math.round(g.player.x) + ' vs ' + Math.round(px0));
+    ok(g.props.length === cache.props.length, '可破坏物数量一致');
+    ok(g.monsters.every((m) => m.def), '恢复出来的怪物定义完整');
+    ok(g.monsters.filter((m) => m.dead).length >= 3, '已死的怪物仍然是死的',
+      g.monsters.filter((m) => m.dead).length);
+
+    // 进入别的层数 → 缓存作废
+    const keep = g.serializeFloor();
+    g.enterFloor(8);
+    ok(g.floor === 8 && g.floorCache === null, '进入别的层数后旧缓存被丢弃', String(g.floorCache));
+    g.enterFloor(7);
+    ok(g.monsters.length !== 0, '再回到第 7 层会重新生成');
+    ok(g.floorCache === null || g.floorCache.floor === 7, '缓存只跟踪当前层');
+
+    // 存档 → 读档（等同刷新页面）也恢复
+    g.toDungeon(9);
+    const mon9 = g.monsters.length;
+    G.Combat.killMonster(g, g.monsters[0], true);
+    const killed9 = g.killed;
+    const px9 = g.player.x + 20;
+    g.player.x = px9;
+    g.save();
+    const g2 = new G.Game(4);
+    G.GAME = g2; G.UI.game = g2;
+    ok(g2.load(g.slot) === true, '读档成功');
+    ok(g2.floor === 9 && g2.area === 'dungeon', '回到第 9 层', g2.floor + '/' + g2.area);
+    ok(g2.monsters.length === mon9, '刷新后怪物数量一致', g2.monsters.length + ' / ' + mon9);
+    ok(g2.killed === killed9, '刷新后击杀进度一致', g2.killed);
+    ok(Math.abs(g2.player.x - px9) < 1, '刷新后位置一致');
+    G.GAME = g; G.UI.game = g;
+  }
+
+  /* ---------- 第 1 条：装备过滤器 ---------- */
+  {
+    const F = G.Filter;
+    ok(!!F, '过滤器模块已加载');
+    ok(F.MAX_RULES === 20, '规则上限 20 条', F.MAX_RULES);
+    F.clear();
+    F.data.enabled = true;
+
+    const g = new G.Game(4321);
+    G.GAME = g; G.UI.game = g;
+    g.player = G.ENT.makePlayer(g, 'barb');
+    const p = g.player;
+    p.level = 30; S.derive(p);
+    const common = L.makeItem(g.rng, { ilvl: 20, slot: 'chest', rarity: 'common' });
+    const rare = L.makeItem(g.rng, { ilvl: 20, slot: 'chest', rarity: 'rare' });
+    const rareHi = L.makeItem(g.rng, { ilvl: 50, slot: 'chest', rarity: 'rare' });
+
+    // 空规则 → 全部显示
+    ok(F.decide(common, {}).state === 'normal', '没有规则时一切正常显示');
+
+    // 单条规则：普通 → 隐藏
+    F.addRule({ action: 'hide', enabled: true, conds: [{ type: 'rarity', op: 'is', value: 'common' }] });
+    ok(F.decide(common, {}).state === 'hide', '规则命中：普通装备被隐藏');
+    ok(F.decide(rare, {}).state === 'normal', '不命中的装备照常显示');
+
+    // 靠前的规则优先：把「稀有 → 高亮」放到最前面
+    F.data.rules.unshift({ action: 'show', enabled: true, conds: [{ type: 'rarity', op: 'is', value: 'rare' }] });
+    ok(F.decide(rare, {}).state === 'show', '靠前的规则优先生效（高亮）');
+    ok(F.decide(common, {}).state === 'hide', '后面的规则继续对其它物品生效');
+
+    // 多条细则 = 同时满足
+    F.clear();
+    F.addRule({ action: 'show', enabled: true, conds: [
+      { type: 'rarity', op: 'is', value: 'rare' },
+      { type: 'ilvl', op: '>=', value: 40 },
+    ] });
+    ok(F.decide(rareHi, {}).state === 'show', '两条细则都满足才命中', F.ruleText(F.data.rules[0]));
+    ok(F.decide(rare, {}).state === 'normal', '只满足一条不算命中');
+
+    // 禁用规则 / 关闭过滤器
+    F.data.rules[0].enabled = false;
+    ok(F.decide(rareHi, {}).state === 'normal', '禁用后的规则不生效');
+    F.data.rules[0].enabled = true;
+    F.data.enabled = false;
+    ok(F.decide(rareHi, {}).state === 'normal', '关闭过滤器后全部显示');
+    F.data.enabled = true;
+
+    // 词缀 / 需求 / 部位 / 可穿戴 等细则
+    F.clear();
+    rare.affixes = [{ id: 'p_crit', stat: 'crit', value: 5, tier: 1, kind: 'prefix', name: '精准的' }];
+    F.addRule({ action: 'show', enabled: true, conds: [{ type: 'affix', op: 'has', value: '暴击' }] });
+    ok(F.decide(rare, {}).state === 'show', '按词缀文本匹配（暴击）');
+    ok(F.decide(rareHi, {}).state === 'normal', '没有该词缀就不命中');
+    F.clear();
+    F.addRule({ action: 'hide', enabled: true, conds: [{ type: 'slot', op: 'is', value: 'chest' }] });
+    ok(F.decide(common, {}).state === 'hide', '按部位匹配');
+    F.clear();
+    F.addRule({ action: 'hide', enabled: true, conds: [{ type: 'canEquip', op: 'is', value: 'false' }] });
+    ok(F.decide(common, { canEquip: false }).state === 'hide', '按「当前穿不上」匹配');
+    ok(F.decide(common, { canEquip: true }).state === 'normal', '能穿上时不命中');
+    F.clear();
+    const heavy = L.makeItem(g.rng, { ilvl: 60, slot: 'chest', rarity: 'rare' });
+    heavy.req = { level: 40, str: 90 };
+    F.addRule({ action: 'hide', enabled: true, conds: [{ type: 'reqStr', op: '>=', value: 80 }] });
+    ok(F.decide(heavy, {}).state === 'hide', '按属性需求匹配');
+    F.clear();
+    F.addRule({ action: 'show', enabled: true, conds: [{ type: 'sockets', op: '>=', value: 2 }] });
+    const socked = L.makeItem(g.rng, { ilvl: 30, slot: 'chest', rarity: 'rare' });
+    socked.sockets = 2; socked.gems = [null, null];
+    ok(F.decide(socked, {}).state === 'show', '按孔位数匹配');
+
+    // 规则管理：上限、删除、排序
+    F.clear();
+    let ruleAdded = 0;
+    for (let i = 0; i < F.MAX_RULES; i++) if (F.addRule(F.newRule('hide')) === true) ruleAdded++;
+    ok(ruleAdded === F.MAX_RULES, '能连续添加满 ' + F.MAX_RULES + ' 条规则', ruleAdded);
+    ok(F.data.rules.length === F.MAX_RULES, '规则数量达到上限');
+    ok(F.addRule(F.newRule('hide')) === false, '超过 20 条时添加失败');
+    F.removeRule(0);
+    ok(F.data.rules.length === F.MAX_RULES - 1, '可以删除规则');
+    const first = F.data.rules[0];
+    F.moveRule(0, 1);
+    ok(F.data.rules[1] === first, '可以调整规则顺序（优先级）');
+
+    // 导出 / 导入
+    F.clear();
+    F.addRule({ action: 'hide', enabled: true, conds: [{ type: 'rarity', op: 'is', value: 'common' }] });
+    F.addRule({ action: 'show', enabled: true, conds: [{ type: 'ilvl', op: '>=', value: 60 }] });
+    const txt = F.exportText();
+    ok(txt.indexOf('"rules"') >= 0 && JSON.parse(txt).rules.length === 2, '导出为 JSON 文本');
+    F.clear();
+    ok(F.data.rules.length === 0, '清空成功');
+    const imp = F.importText(txt);
+    ok(imp.ok && F.data.rules.length === 2, '导入成功', imp.ok ? imp.rules + ' 条' : imp.why);
+    ok(F.data.rules[0].action === 'hide' && F.data.rules[1].conds[0].value === 60, '导入后内容正确');
+    ok(F.importText('{不是 json').ok === false, '坏文本导入会失败但不崩');
+    ok(F.importText('{"rules":[]}').ok === true, '空规则集也能导入');
+
+    // 界面：格子渲染出隐藏 / 高亮状态
+    F.clear();
+    F.addRule({ action: 'hide', enabled: true, conds: [{ type: 'rarity', op: 'is', value: 'common' }] });
+    F.addRule({ action: 'show', enabled: true, conds: [{ type: 'rarity', op: 'is', value: 'rare' }] });
+    UI_clearUpCache();
+    G.UI.refreshFilterViews();
+    ok(G.UI.cellClass(common).indexOf('flt-hide') >= 0, '被隐藏的格子带 flt-hide 类', G.UI.cellClass(common));
+    ok(G.UI.cellInner(common).indexOf('flt-hidden') >= 0, '被隐藏的格子显示淡化的叉');
+    ok(G.UI.cellClass(rare).indexOf('flt-show') >= 0, '高亮的格子带 flt-show 类');
+    ok(G.UI.cellInner(rare).indexOf('flt-mark') >= 0, '高亮的格子有标记');
+    ok(G.UI.cellClass(null).indexOf('empty') >= 0, '空格子不受影响');
+    G.UI.filterReveal = true;
+    ok(G.UI.cellClass(common).indexOf('flt-hide') < 0, '临时显示开关能看回被隐藏的物品');
+    G.UI.filterReveal = false;
+
+    // 面板渲染
+    G.UI.togglePanel('panel-filter', true);
+    ok(G.el('filter-rules').children.length === 2, '面板列出全部规则', G.el('filter-rules').children.length);
+    ok(G.el('filter-rules').children[0].innerHTML.indexOf('flt-hide') < 0, '规则卡片正常渲染');
+    ok(G.el('filter-rules').children[0].innerHTML.indexOf('<select') >= 0, '规则里有下拉控件');
+    ok(G.el('filter-count').textContent.indexOf('2 / 20') >= 0, '显示规则数量', G.el('filter-count').textContent);
+    // 通过界面改动作 → 数据跟着变
+    G.UI.filterEdit({ target: { dataset: { rule: '0', field: 'action' }, value: 'show' } });
+    ok(F.data.rules[0].action === 'show', '面板改动作会写回数据');
+    G.UI.filterClick({ target: { dataset: { rule: '1', act: 'up' } } });
+    ok(F.data.rules[0].conds[0].value === 'rare', '面板上移规则生效');
+    G.UI.filterClick({ target: { dataset: { rule: '0', act: 'del' } } });
+    ok(F.data.rules.length === 1, '面板删除规则生效');
+    G.UI.togglePanel('panel-filter', false);
+    F.clear();
+    F.save();
+  }
+
+  /* ---------- 第 2 条：按键提示随改键更新 ---------- */
+  {
+    const g = new G.Game(90202);
+    G.GAME = g; G.UI.game = g;
+    g.player = G.ENT.makePlayer(g, 'barb');
+    const p = g.player;
+    p.level = 20; S.derive(p);
+
+    // 标签读取当前绑定
+    G.Settings.setBind('craft', 'KeyG');
+    ok(G.Settings.actionLabel('craft') === 'G', '快捷键标签读当前绑定', G.Settings.actionLabel('craft'));
+    G.Settings.setBind('craft', 'KeyY');
+    ok(G.Settings.actionLabel('craft') === 'Y', '改键后标签跟着变', G.Settings.actionLabel('craft'));
+    ok(G.Settings.actionLabel('nope') === '未绑定', '没绑定的动作显示未绑定');
+
+    // 操作模式说明里的按键也跟着变
+    G.Settings.setBind('attack', 'KeyY');
+    const d1 = G.UI.modeDesc('mouse');
+    ok(d1.indexOf('Y') >= 0 && d1.indexOf('普通攻击') >= 0, '模式说明使用当前绑定（普攻键）', d1.slice(0, 40));
+    G.Settings.setBind('attack', 'MouseRight');
+    ok(G.UI.modeDesc('mouse').indexOf('鼠标右键') >= 0, '改回去后说明也回退');
+    G.Settings.setBind('craft', 'KeyG');
+
+    // 技能栏角标
+    G.Settings.setMode('mouse');
+    G.UI.buildSkillbar();
+    ok(G.UI.slotRefs.length >= 5, '技能栏有 5 格', G.UI.slotRefs.length);
+    ok(G.UI.slotRefs[0].slot.innerHTML.indexOf('鼠标右键') >= 0, '鼠标模式普攻角标是右键',
+      G.UI.slotRefs[0].slot.innerHTML.replace(/<[^>]*>/g, ' ').trim().slice(0, 30));
+    G.Settings.setBind('skill1', 'KeyZ');
+    G.UI.buildSkillbar();
+    ok(G.UI.slotRefs[1].slot.innerHTML.indexOf('Z') >= 0, '改键后技能栏角标更新',
+      G.UI.slotRefs[1].slot.innerHTML.replace(/<[^>]*>/g, ' ').trim().slice(0, 30));
+    G.Settings.setBind('skill1', 'Digit1');
+
+    // 帮助面板两行
+    G.UI.refreshKeyHints();
+    ok(G.el('help-mode-mouse').innerHTML.indexOf(G.Settings.actionLabel('attack')) >= 0,
+      '帮助面板的鼠标模式行使用当前绑定');
+    ok(G.el('help-mode-wasd').innerHTML.indexOf(G.Settings.actionLabel('moveUp')) >= 0,
+      '帮助面板的 WASD 行使用当前绑定');
+
+    // 任务提示行（站在 NPC 旁边）
+    g.enterTown({ silent: true });
+    const npc = g.map.npcs[0];
+    p.x = npc.x; p.y = npc.y + 20;
+    G.Settings.setBind('pickup', 'KeyX');
+    G.UI.updateHUD();
+    const obj = G.el('objective').innerHTML;
+    ok(obj.indexOf('X') >= 0 && obj.indexOf('交谈') >= 0, '任务行里的交互按键使用当前绑定',
+      obj.replace(/<[^>]*>/g, ' ').trim().slice(0, 40));
+    G.Settings.setBind('pickup', 'KeyF');
+    G.UI.updateHUD();
+    ok(G.el('objective').innerHTML.indexOf('F') >= 0, '改回 F 后提示也跟着回退');
+    G.Settings.save();
+  }
+
+  /* ---------- 第 3 条：精简冗余描述 ---------- */
+  {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+    ok(src.indexOf('想重新分配属性') < 0, '深渊之门面板不再写「洗点找深渊向导」');
+    ok(src.indexOf('分支 5 / 10 / 15 / 20 / 25 级解锁<br>') < 0, '技能窗口不再写两行重复提示');
+    ok(src.indexOf('id="rift-diffs"') >= 0, '深渊之门面板改放难度选择');
+    const tip = G.Loot.tooltipHTML(G.Loot.makeItem(G.RNG(7), { ilvl: 40, slot: 'weapon', baseId: 'w_greatsword_4' }), null, {});
+    ok(tip.indexOf('双手武器：占主手') < 0 && tip.indexOf('孔位上限') < 0, '双手武器提示框不再重复解释规则');
+  }
+
+  /* ---------- 第 5 条：装备界面布局（参考图：头盔居中 + 三行） ---------- */
+  {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+    ok(/\.gear-doll\{[^}]*grid-template-columns:repeat\(3,1fr\)/.test(css), '装备栏是 3 列网格');
+    ok(/\.slot-equip\{[^}]*aspect-ratio:1 \/ 1/.test(css), '背包装备栏格子接近正方形（aspect-ratio 1:1）');
+    ok(!/\.slot-equip\{[^}]*min-height:64px/.test(css), '不再用固定高度把格子拉成长方形');
+    ok(/\.doll\.gear-doll\{[^}]*max-width/.test(css), '装备栏限宽，保证格子是方的');
+    const want = { helm: [1, 2], gloves: [2, 1], chest: [2, 2], amulet: [2, 3], weapon: [3, 1], belt: [3, 2], offhand: [3, 3], ring1: [4, 1], boots: [4, 2], ring2: [4, 3] };
+    let missing = [];
+    Object.keys(want).forEach((slot) => {
+      const r = want[slot];
+      const re = new RegExp('\\.gear-doll>\\[data-slot="' + slot + '"\\]\\{grid-area:' + r[0] + '/' + r[1] + '/' + (r[0] + 1) + '/' + (r[1] + 1) + '\\}');
+      if (!re.test(css)) missing.push(slot + '→' + r.join('/'));
+    });
+    ok(missing.length === 0, '10 个部位按参考图定位（头盔居中、其余三行）', missing.join(' '));
+
+    // 两个装备栏都挂上 .gear-doll，并且每个格子都带 data-slot
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+    ok(src.indexOf('class="doll gear-doll" id="equip-doll"') >= 0, '背包装备栏使用新布局容器');
+    ok(src.indexOf('id="craft-gear" class="craft-gear gear-doll"') >= 0, '做装工坊装备栏使用同一布局');
+
+    const g = new G.Game(90505);
+    G.GAME = g; G.UI.game = g;
+    g.player = G.ENT.makePlayer(g, 'barb');
+    const p = g.player;
+    p.level = 20; p.gear.helm = G.Loot.makeItem(g.rng, { ilvl: 20, slot: 'helm', rarity: 'rare' });
+    p.gear.weapon = G.Loot.makeItem(g.rng, { ilvl: 20, slot: 'weapon', rarity: 'magic' });
+    p.gear.offhand = G.Loot.makeItem(g.rng, { ilvl: 20, slot: 'offhand', rarity: 'common' });
+    S.derive(p);
+    G.UI.dirty.char = true;
+    G.UI.refreshEquipDoll();
+    const doll = G.el('equip-doll');
+    const cells = Array.prototype.slice.call(doll.children);
+    const slotsSeen = cells.map((c) => c.dataset.slot).join(',');
+    const missSlots = Object.keys(want).filter((slot) => slotsSeen.indexOf(slot) < 0);
+    ok(cells.length === D.SLOTS.length && missSlots.length === 0 && cells.every((c) => c.dataset.slot),
+      '装备栏 10 个格子齐全且都带 data-slot（供布局定位）', missSlots.join(','));
+    const helmCell = cells.filter((c) => c.dataset.slot === 'helm')[0];
+    ok(helmCell.innerHTML.indexOf(L.displayName(p.gear.helm)) >= 0, '头盔格子显示装备名');
+    ok(helmCell.title.indexOf(L.displayName(p.gear.helm)) >= 0, '格子 title 是完整名称（省略号时也能看全）');
+    const emptyCell = cells.filter((c) => c.className.indexOf('empty') >= 0)[0];
+    ok(emptyCell && emptyCell.className.indexOf('empty') >= 0, '空槽位带 empty 类（虚线边框）');
+    ok(emptyCell.innerHTML.indexOf(' · 空') >= 0, '空槽位显示「部位 · 空」');
+    // 做装工坊的装备栏也带 data-slot
+    G.UI.togglePanel('panel-craft', true);
+    const cg = G.el('craft-gear');
+    ok(cg.children.length === D.SLOTS.length, '做装工坊装备栏格子数一致', cg.children.length);
+    ok(Array.prototype.slice.call(cg.children).every((c) => c.dataset.slot), '做装工坊装备栏也带 data-slot');
+    G.UI.togglePanel('panel-craft', false);
+  }
+
+  report('Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / 技能收益 / 过滤器 / 按键提示 全部通过');
+}
+
+/* ============================================================ */
+section('20. 装备对比：秒伤（含附加元素伤害）与坚韧');
+{
+  const L = G.Loot, S = G.Stats;
+
+  const g = new G.Game(90210);
+  G.GAME = g; G.UI.game = g;
+  g.player = G.ENT.makePlayer(g, 'barb');
+  const p = g.player;
+  p.level = 45;
+  g.mlvl = 45;
+  S.derive(p);
+
+  /* ---------- 秒伤：孤立的武器数值 ---------- */
+  const w1 = L.makeItem(g.rng, { ilvl: 40, slot: 'weapon', rarity: 'common' });
+  w1.affixes = []; w1.implicit = []; w1.gems = [];
+  w1.min = 20; w1.max = 30; w1.aps = 1.2; w1.two = false;
+  const dpsPlain = L.itemDps(w1);
+  ok(Math.abs(dpsPlain - 30) < 0.01, '无词缀武器秒伤 = 均值 × 攻速', dpsPlain.toFixed(2));
+
+  // 附加元素伤害必须计入（之前漏算）
+  w1.affixes = [{ stat: 'addFire', value: 20 }];
+  const dpsFire = L.itemDps(w1);
+  ok(dpsFire > dpsPlain, '附加火焰伤害会提高秒伤', dpsPlain.toFixed(2) + ' → ' + dpsFire.toFixed(2));
+  ok(Math.abs(dpsFire - (dpsPlain + 20 * 0.9 * 1.2)) < 0.01, '附加元素按 0.9 折算并吃攻速',
+    (dpsFire - dpsPlain).toFixed(2));
+
+  // 攻速词缀也算进去
+  w1.affixes = [{ stat: 'aps', value: 20 }];
+  ok(Math.abs(L.itemDps(w1) - 25 * 1.44) < 0.01, '武器自身的攻速词缀计入秒伤', L.itemDps(w1).toFixed(2));
+  w1.affixes = [];
+
+  /* ---------- 秒伤对比：两件武器的差值互为相反数 ---------- */
+  const w2 = L.makeItem(g.rng, { ilvl: 40, slot: 'weapon', rarity: 'common' });
+  w2.affixes = []; w2.implicit = []; w2.gems = [];
+  w2.min = 40; w2.max = 60; w2.aps = 1.5; w2.two = false;
+  p.gear.weapon = w2;
+  S.derive(p);
+  const vs = G.UI.compareVersus(p, w1, [{ slot: 'weapon', label: '主手', item: w2 }]);
+  const dNew = vs.byItem[w1.uid].dps, dOld = vs.byItem[w2.uid].dps;
+  ok(dNew != null && dOld != null, '两把武器都有秒伤差值');
+  ok(Math.abs(dNew + dOld) < 0.01, '两个窗口的秒伤差值互为相反数', dNew.toFixed(1) + ' / ' + dOld.toFixed(1));
+  ok(dNew < 0 && dOld > 0, '更差的武器显示为负、更好的显示为正', dNew.toFixed(1) + ' / ' + dOld.toFixed(1));
+  ok(Math.abs(dOld - (L.itemDps(w2) - L.itemDps(w1))) < 0.01, '差值 = 两件武器各自的秒伤之差');
+
+  // 没有对照武器时不编造差值
+  const solo = G.UI.compareVersus(p, w1, null);
+  ok(solo.byItem[w1.uid] && solo.byItem[w1.uid].dps == null, '空槽位不显示秒伤差值');
+  ok(L.cmpBadge(null) === '' && L.cmpBadge(0).indexOf('＝') > 0 &&
+    L.cmpBadge(5).indexOf('up') > 0 && L.cmpBadge(-5).indexOf('down') > 0,
+    '对比徽章：空 / 持平 / 提升 / 下降');
+
+  // 提示框里真的出现秒伤与徽章
+  const tNew = L.tooltipHTML(w1, p, { compare: false, versus: vs.byItem[w1.uid] });
+  ok(tNew.indexOf('每秒伤害') >= 0, '武器提示框显示每秒伤害');
+  ok(tNew.indexOf('cmp down') >= 0, '武器提示框带下降徽章');
+  const tElem = L.tooltipHTML(Object.assign({}, w1, { affixes: [{ stat: 'addFire', value: 20 }] }), p, { compare: false });
+  ok(tElem.indexOf('火焰伤害') >= 0, '武器提示框列出附加元素伤害', '');
+
+  /* ---------- 坚韧：公式与不减血 ---------- */
+  p.gear.weapon = null; S.derive(p);
+  const st = p.stats;
+  const tough = S.toughness(p, g.mlvl);
+  const mitP = S.armorMitigation(st.armor, g.mlvl);
+  const dodge = Math.max(0.05, 1 - st.dodge / 100);
+  const reduce = Math.max(0.05, 1 - (st.dmgReduce || 0) / 100);
+  ok(Math.abs(tough.byType.physical - st.maxLife / (1 - mitP) / dodge / reduce) < 0.5,
+    '物理坚韧 = 生命 ÷（1−护甲减伤）÷（1−闪避）', Math.round(tough.byType.physical));
+  const mitF = S.resistMitigation(st.res.fire);
+  ok(Math.abs(tough.byType.fire - st.maxLife / (1 - mitF) / dodge / reduce) < 0.5,
+    '火焰坚韧按火抗计算', Math.round(tough.byType.fire));
+  const mean = S.TOUGH_TYPES.reduce((a, k) => a + tough.byType[k], 0) / S.TOUGH_TYPES.length;
+  ok(Math.abs(tough.total - mean) < 0.01, '总坚韧 = 五系平均', Math.round(tough.total));
+  ok(tough.total >= st.maxLife * 0.99, '坚韧不小于生命上限（减伤只会放大）');
+
+  // 换装试算不能改到玩家的血量 / 法力
+  p.life = Math.round(p.stats.maxLife * 0.6);
+  p.mana = Math.round(p.stats.maxMana * 0.5);
+  const life0 = p.life, mana0 = p.mana;
+  const chest = L.makeItem(g.rng, { ilvl: 60, slot: 'chest', rarity: 'rare' });
+  chest.affixes = [{ stat: 'armor', value: 400 }, { stat: 'maxLife', value: 200 }];
+  const tAfter = S.toughnessWith(p, chest, 'chest', g.mlvl);
+  ok(p.life === life0 && p.mana === mana0, '试算坚韧不会动到当前生命 / 法力',
+    p.life + '|' + p.mana + ' vs ' + life0 + '|' + mana0);
+  ok(!p.gear.chest || p.gear.chest.uid !== chest.uid, '试算后装备栏已还原');
+  ok(tAfter.total > tough.total, '换上更好的胸甲坚韧提升', Math.round(tough.total) + ' → ' + Math.round(tAfter.total));
+
+  /* ---------- 坚韧对比：徽章方向 ---------- */
+  const chestOld = L.makeItem(g.rng, { ilvl: 20, slot: 'chest', rarity: 'common' });
+  chestOld.affixes = []; chestOld.implicit = []; chestOld.gems = [];
+  p.gear.chest = chestOld; S.derive(p);
+  const vsC = G.UI.compareVersus(p, chest, [{ slot: 'chest', label: '胸甲', item: chestOld }]);
+  const cNew = vsC.byItem[chest.uid].tough, cOld = vsC.byItem[chestOld.uid].tough;
+  ok(cNew && cOld, '两件护甲都有坚韧数据');
+  ok(cNew.delta > 0 && cOld.delta < 0 && Math.abs(cNew.delta + cOld.delta) < 1,
+    '坚韧差值方向正确且两侧互为相反数', Math.round(cNew.delta) + ' / ' + Math.round(cOld.delta));
+  const tChest = L.tooltipHTML(chest, p, { compare: false, tough: cNew });
+  ok(tChest.indexOf('坚韧') >= 0 && tChest.indexOf('cmp up') >= 0, '护甲提示框显示坚韧与提升徽章');
+  const tWeaponHasTough = L.tooltipHTML(w2, p, { compare: false, tough: cNew });
+  ok(tWeaponHasTough.indexOf('坚韧') < 0, '武器不显示坚韧（只看秒伤）');
+
+  // 角色面板：只显示总坚韧，悬停才展开分项
+  const th = G.UI.toughnessHTML(tough);
+  ok(th.indexOf('坚韧总计') >= 0 && S.TOUGH_TYPES.every((k) => th.indexOf(S.TOUGH_NAME[k]) >= 0),
+    '坚韧明细包含总计与五类伤害');
+  ok(th.indexOf('闪避') >= 0 && th.indexOf('护甲') >= 0, '坚韧明细列出计算输入');
+
+  /* ---------- 面板里的迷你属性也带坚韧 ---------- */
+  G.UI.togglePanel('panel-inventory', true);
+  const mini = G.el('mini-stats');
+  ok(mini && mini.innerHTML.indexOf('坚韧') >= 0, '背包装备栏的迷你属性显示坚韧');
+  G.UI.togglePanel('panel-inventory', false);
+
+  report('装备对比：秒伤（含附加元素）/ 坚韧（分项与试算）全部通过');
+}
+
+/* ============================================================ */
 section('17. DOM 引用一致性（index.html ↔ js）');
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const htmlIds = new Set();
 (html.match(/id="([^"]+)"/g) || []).forEach((m) => htmlIds.add(m.slice(4, -1)));
 const jsAll = files.map((f) => fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8')).join('\n');
 const refs = new Set();
-(jsAll.match(/el\(\s*'([^']+)'\s*\)/g) || []).forEach((m) => refs.add(m.replace(/el\(\s*'|'\s*\)/g, '')));
+// 注意：前面要挡掉单词字符，否则 actionLabel('x') 里的 "el('x')" 会被误当成 id 引用
+(jsAll.match(/(?:^|[^\w$.])el\(\s*'([^']+)'\s*\)/g) || []).forEach((m) => {
+  refs.add(m.replace(/^[^\w$.]*el\(\s*'/, '').replace(/'\s*\)$/, ''));
+});
 (jsAll.match(/G\.text\(\s*'([^']+)'/g) || []).forEach((m) => refs.add(m.replace(/G\.text\(\s*'|'/g, '')));
 (jsAll.match(/togglePanel\(\s*'([^']+)'/g) || []).forEach((m) => refs.add(m.replace(/togglePanel\(\s*'|'/g, '')));
 (jsAll.match(/data-close="([^"]+)"/g) || []).forEach((m) => refs.add(m.slice(12, -1)));
@@ -3363,7 +4006,8 @@ const mustHave = ['game', 'hud', 'skillbar', 'minimap', 'orb-life', 'orb-mana', 
   'panel-settings', 'mode-pick', 'mode-desc', 'bind-list', 'bind-mode-label',
   'bind-warn', 'btn-bind-reset', 'btn-sound', 'btn-menu-settings',
   'held-gem', 'gem-pull-list', 'gem-pull-count', 'btn-gem-pull-all', 'held-orb', 'panel-respec',
-  'panel-skill', 'sk-tree', 'guide-say'];
+  'panel-skill', 'sk-tree', 'guide-say', 'rift-diffs', 'panel-filter', 'filter-rules', 'filter-json',
+  'filter-enabled', 'filter-count', 'btn-filter'];
 const missing2 = mustHave.filter((id) => !htmlIds.has(id));
 ok(missing2.length === 0, 'HTML 关键元素齐全', missing2.join(', '));
 // CSS 引用的类是否在 JS/HTML 中出现过（粗查）

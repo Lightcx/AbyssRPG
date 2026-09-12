@@ -32,6 +32,8 @@ b{color:#f0e2c0;font-weight:600}
 .c-common{color:var(--c-common)} .c-magic{color:var(--c-magic)}
 .c-rare{color:var(--c-rare)} .c-unique{color:var(--c-unique)}
 .c-boss{color:#ff6b4a}
+.c-gem{color:#9fe8ff}
+.c-orb{color:#ffcf6b}
 .hidden{display:none!important}
 
 /* ================= HUD ================= */
@@ -152,7 +154,7 @@ b{color:#f0e2c0;font-weight:600}
 .panel::before{
   content:"";position:absolute;inset:3px;border:1px solid rgba(200,164,92,.18);border-radius:3px;pointer-events:none;
 }
-#panel-inventory{left:50%;top:52%;transform:translate(-50%,-50%);width:790px;max-width:96vw}
+#panel-inventory{left:50%;top:52%;transform:translate(-50%,-50%);width:880px;max-width:96vw}
 #panel-character{left:50%;top:50%;transform:translate(-50%,-50%);width:680px;max-width:96vw}
 #panel-vendor{left:50%;top:50%;transform:translate(-50%,-50%);width:760px;max-width:96vw}
 #panel-help{left:50%;top:50%;transform:translate(-50%,-50%);width:720px;max-width:96vw}
@@ -175,7 +177,8 @@ b{color:#f0e2c0;font-weight:600}
 .pbody::-webkit-scrollbar-thumb{background:#3d332a;border-radius:4px}
 
 .inv-body{display:flex;gap:14px}
-.col-equip{width:250px;flex:none}
+.col-equip{width:296px;flex:none;display:flex;flex-direction:column;align-items:center}
+.col-equip .mini-stats,.col-equip .doll{width:100%}
 .col-inv{flex:1;min-width:0}
 .grid{display:grid;grid-template-columns:repeat(10,1fr);gap:3px}
 .grid.small{grid-template-columns:repeat(8,1fr)}
@@ -196,8 +199,6 @@ b{color:#f0e2c0;font-weight:600}
 /* 孔位标识：装备图标下方的菱形，一个孔一颗，无孔不显示 */
 .sockets{display:flex;gap:3px;align-items:flex-end}
 .cell .sockets{position:absolute;bottom:1px;left:0;right:0;justify-content:center}
-/* 双手武器最多 8 孔：上面 4 颗、下面 4 颗，夹住图标 */
-.cell .sockets.top{bottom:auto;top:1px}
 .sockets i{
   width:6px;height:6px;display:block;flex:none;
   background:#241f19;border:1px solid #7a6845;border-radius:1px;
@@ -233,19 +234,43 @@ b{color:#f0e2c0;font-weight:600}
 .btn[disabled]{opacity:.4;cursor:default}
 
 /* 装备栏 */
-.doll{display:grid;grid-template-columns:repeat(2,1fr);gap:5px;margin-bottom:12px}
+/* ================= 装备栏（按参考图排布） =================
+ *            头盔
+ *   手套     胸甲     项链
+ *   主手     腰带     副手
+ *   戒指1    靴子     戒指2
+ * 两个地方共用同一套排布：背包左侧的装备栏、做装工坊左侧的装备栏。
+ */
+.gear-doll{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;align-items:stretch}
+.gear-doll>[data-slot="helm"]{grid-area:1/2/2/3}
+.gear-doll>[data-slot="gloves"]{grid-area:2/1/3/2}
+.gear-doll>[data-slot="chest"]{grid-area:2/2/3/3}
+.gear-doll>[data-slot="amulet"]{grid-area:2/3/3/4}
+.gear-doll>[data-slot="weapon"]{grid-area:3/1/4/2}
+.gear-doll>[data-slot="belt"]{grid-area:3/2/4/3}
+.gear-doll>[data-slot="offhand"]{grid-area:3/3/4/4}
+.gear-doll>[data-slot="ring1"]{grid-area:4/1/5/2}
+.gear-doll>[data-slot="boots"]{grid-area:4/2/5/3}
+.gear-doll>[data-slot="ring2"]{grid-area:4/3/5/4}
+.doll{margin-bottom:12px}
+/* 背包装备栏：格子做成接近正方形（宽度由列宽决定，高度跟着走） */
+.doll.gear-doll{max-width:282px}
 .slot-equip{
-  position:relative;height:44px;border:1px solid #332b22;border-radius:3px;
-  background:linear-gradient(180deg,#1b1611,#0e0b09);display:flex;align-items:center;gap:7px;padding:0 7px;
-  cursor:pointer;font-size:18px;
+  position:relative;aspect-ratio:1 / 1;border:1px solid #332b22;border-radius:4px;
+  background:linear-gradient(180deg,#1b1611,#0e0b09);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  padding:4px 4px 12px;cursor:pointer;
 }
 .slot-equip:hover{border-color:var(--gold)}
+.slot-equip.empty{border-style:dashed}
 .slot-equip.empty .nm{color:#6f6656}
-/* 已穿戴装备也显示孔位菱形（图标下方） */
-.slot-equip .sockets{position:absolute;left:7px;bottom:3px}
-.slot-equip .sockets.top{bottom:auto;top:3px}
-.slot-equip .g{width:18px;text-align:center;flex:none}
-.slot-equip .nm{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+/* 已穿戴装备也显示孔位菱形（图标下方居中） */
+.slot-equip .sockets{position:absolute;left:50%;transform:translateX(-50%);bottom:3px}
+.slot-equip .g{font-size:24px;line-height:1;flex:none;opacity:.9}
+.slot-equip .nm{
+  font-size:10.5px;line-height:1.25;text-align:center;max-width:100%;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
 .mini-stats{font-size:12px;line-height:1.75;color:#b8ab90}
 .mini-stats .row{display:flex;justify-content:space-between;border-bottom:1px dashed rgba(200,164,92,.14)}
 .mini-stats .row b{color:#e8dcbb}
@@ -304,6 +329,11 @@ b{color:#f0e2c0;font-weight:600}
 .sk-hdesc{font-size:12px;color:#8c8272;margin-top:2px}
 .sk-hstats{font-size:12px;color:#b8ab90;margin-top:5px}
 .sk-hstats .skmods{margin-top:4px;font-size:11px;color:#8ce07a}
+.sk-hstats .skgain{margin-top:5px;padding-top:5px;border-top:1px dashed rgba(200,164,92,.2);color:#cfe0f5}
+.sk-hstats .skgain .hd{color:#d8c79f;margin-right:4px}
+.sk-hstats .skgain b{color:#8ce07a}
+.sk-hstats .skgain.maxed{color:#8ce07a}
+.sk-hstats .skgain.bad{color:#ff8f8f}
 .sk-headctl{flex:none;text-align:right;font-size:11px;line-height:1.5}
 .sk-treewrap{overflow:auto;border:1px solid #2b241c;border-radius:5px;background:rgba(0,0,0,.22)}
 .sk-tree{position:relative;width:1000px;height:440px}
@@ -439,18 +469,27 @@ b{color:#f0e2c0;font-weight:600}
   background:linear-gradient(180deg,rgba(16,13,10,.98),rgba(9,7,6,.98));
   border:1px solid #5a4a30;border-radius:4px;box-shadow:0 10px 30px rgba(0,0,0,.9);
 }
-#tooltip .tname{font-size:14px;letter-spacing:1px;margin-bottom:2px}
+#tooltip .tname{font-size:14px;letter-spacing:1px;margin-bottom:2px;display:flex;align-items:baseline;gap:10px}
+/* 名称行右侧的「装备评分」 */
+#tooltip .tnm{flex:1;min-width:0}
+#tooltip .tscore{margin-left:auto;font-size:11px;letter-spacing:0;color:#d8c79f;white-space:nowrap}
+#tooltip .tscore b{color:#ffe9a8;font-size:12px}
 #tooltip .ttype{font-size:11px;color:#8c8272;margin-bottom:6px}
 #tooltip .tsep{height:1px;background:linear-gradient(90deg,rgba(200,164,92,.4),transparent);margin:6px 0}
 #tooltip .tstat{color:#9fd8ff}
 #tooltip .tstat.good{color:#8ce07a}
 #tooltip .timplicit{color:#d8c79f}
 #tooltip .tunique{color:#ffb861}
-#tooltip .tflavor{color:#8c8272;font-style:italic;font-size:11px}
+#tooltip .tflavor{color:#8c8272;font-style:italic;font-size:11px;white-space:pre-line}
 #tooltip .treq{font-size:11px}
 #tooltip .treq.bad{color:#ff8f8f}
 #tooltip .tcmp{font-size:11px;margin-top:4px}
 #tooltip .up{color:#8ce07a} #tooltip .down{color:#ff8f8f}
+/* 秒伤 / 坚韧 的对比徽章 */
+#tooltip .cmp{font-size:11px;white-space:nowrap}
+#tooltip .cmp.up{color:#8ce07a} #tooltip .cmp.down{color:#ff8f8f} #tooltip .cmp.eq{color:#8c8272}
+#tooltip .tstat.tough{color:#d8c79f}
+#tooltip .tstat.tough b{color:#ffe9a8}
 #tooltip .tsock{color:#c9c9c9}
 #tooltip .tprice{color:#ffe9a8;margin-top:6px}
 /* 词缀：数值 + 档位 + 范围 + 填充条 */
@@ -504,7 +543,7 @@ b{color:#f0e2c0;font-weight:600}
 #tooltip .tcol.new .tcol-hd{color:#8ce07a}
 #tooltip .tcol.new .tcol-hd::before{content:"▶ ";color:#4f8a45}
 #tooltip .tcol-body{flex:none}
-#tooltip .tcol-body .tprice{display:none}
+/* 金币 / 残晶价值每个窗口各自显示（评分对比结论仍只在右窗底部） */
 #tooltip .tcol-body .tcmp{display:none}
 #tooltip .tcol-body .tcraft{display:none}
 #tooltip .tcmp-foot{
@@ -557,16 +596,17 @@ b{color:#f0e2c0;font-weight:600}
 .col-craft-left .grid{max-height:none;overflow:visible}
 .col-craft-left h3{margin-top:12px}
 .col-craft-left h3:first-child{margin-top:0}
-.craft-gear{display:grid;grid-template-columns:repeat(2,1fr);gap:5px}
-.cg-slot{
-  display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid #332b22;border-radius:4px;
-  background:rgba(0,0,0,.25);font-size:11px;cursor:pointer;position:relative;
+/* 做装工坊的装备栏沿用同一套排布（.gear-doll 提供 3 列与位置） */
+.craft-gear .cg-slot{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+  padding:3px 4px 7px;border:1px solid #332b22;border-radius:4px;
+  background:rgba(0,0,0,.25);font-size:11px;cursor:pointer;position:relative;min-height:52px;
 }
-.cg-slot.has:hover{border-color:var(--gold);background:rgba(200,164,92,.08)}
-.cg-slot.bench-on{border-color:var(--gold);box-shadow:0 0 0 1px rgba(200,164,92,.5) inset;background:rgba(200,164,92,.10)}
-.cg-slot .cg-name{width:44px;flex:none;color:#8c8272}
-.cg-slot .cg-ico{font-size:16px;flex:none}
-.cg-slot .sockets{position:static;margin-left:auto}
+.craft-gear .cg-slot.has:hover{border-color:var(--gold);background:rgba(200,164,92,.08)}
+.craft-gear .cg-slot.bench-on{border-color:var(--gold);box-shadow:0 0 0 1px rgba(200,164,92,.5) inset;background:rgba(200,164,92,.10)}
+.craft-gear .cg-slot .cg-name{color:#8c8272;font-size:10px;line-height:1.2}
+.craft-gear .cg-slot .cg-ico{font-size:17px;line-height:1.05}
+.craft-gear .cg-slot .sockets{position:absolute;left:50%;transform:translateX(-50%);bottom:1px}
 .craft-foot{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:11.5px;color:#b8ab90;flex-wrap:wrap}
 .craft-foot #craft-shards{color:#9fe8ff}
 
@@ -612,6 +652,43 @@ b{color:#f0e2c0;font-weight:600}
 .craft-log .ok{color:#8ce07a}
 .craft-log .bad{color:#ff8f8f}
 .cell.bench-on{border-color:var(--gold) !important;box-shadow:0 0 0 1px rgba(200,164,92,.55) inset}
+
+/* ================= 装备过滤器 ================= */
+#panel-filter{left:50%;top:50%;transform:translate(-50%,-50%);width:780px;max-width:96vw}
+.filter-body{text-align:left}
+.flt-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:12px;margin-bottom:10px}
+.flt-toggle{display:flex;align-items:center;gap:5px;color:#d8c79f;cursor:pointer;user-select:none}
+.flt-rules{display:flex;flex-direction:column;gap:7px;max-height:46vh;overflow:auto;padding-right:2px}
+.frule{border:1px solid #332b22;border-radius:5px;padding:7px 9px;background:rgba(0,0,0,.28);font-size:12px}
+.frule.hide{border-left:3px solid #a8452f}
+.frule.show{border-left:3px solid #8ce07a}
+.frule .fr-hd{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.frule .fr-idx{
+  width:18px;height:18px;line-height:17px;text-align:center;font-size:10px;flex:none;
+  border:1px solid #4a3c2a;border-radius:3px;color:#c8a45c;
+}
+.frule .fr-act{color:#8c8272}
+.frule .fr-sum{flex:1;min-width:120px;color:#b8ab90;font-size:11px}
+.frule select,.fcond select{
+  background:#191410;border:1px solid #4a3c2a;color:#e8dcbb;border-radius:3px;padding:2px 4px;font-size:11.5px;
+}
+.frule .fr-conds{display:flex;flex-direction:column;gap:5px;margin-top:7px;padding-left:6px;border-left:1px dashed rgba(200,164,92,.18)}
+.fcond{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.fcond .flt-num,.fcond .flt-txt{
+  background:#191410;border:1px solid #4a3c2a;color:#e8dcbb;border-radius:3px;padding:2px 6px;font-size:11.5px;width:170px;
+}
+.fcond .flt-num{width:80px}
+.btn.tiny{padding:1px 6px;font-size:11px;line-height:1.5}
+.flt-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.flt-json{
+  width:100%;height:120px;background:#120e0b;border:1px solid #332b22;border-radius:4px;color:#b8ab90;
+  font-family:Consolas,monospace;font-size:11px;padding:6px;resize:vertical;
+}
+/* 被过滤器隐藏 / 高亮的格子 */
+.cell.flt-hide{opacity:.34;background:rgba(0,0,0,.45)}
+.cell.flt-hide .flt-hidden{font-size:16px;color:#5a5148}
+.cell.flt-show{box-shadow:0 0 0 1px #8ce07a inset,0 0 8px rgba(140,224,122,.35)}
+.cell .flt-mark{position:absolute;left:1px;top:0;font-size:10px;color:#8ce07a;text-shadow:0 0 4px #000}
 
 /* ================= 铁匠铺 / 分解 ================= */
 #panel-blacksmith{left:50%;top:50%;transform:translate(-50%,-50%);width:660px;max-width:96vw}
@@ -722,7 +799,21 @@ b{color:#f0e2c0;font-weight:600}
 .bcard.hl{box-shadow:0 0 0 1px var(--gold) inset}
 
 /* ================= 深渊向导 ================= */
-#panel-rift{left:50%;top:50%;transform:translate(-50%,-50%);width:520px;max-width:96vw}
+#panel-rift{left:50%;top:50%;transform:translate(-50%,-50%);width:640px;max-width:96vw}
+/* 难度选择卡片 */
+.diff-list{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;text-align:left}
+.dcard{
+  border:1px solid #332b22;border-radius:5px;padding:7px 9px;background:rgba(0,0,0,.28);
+  cursor:pointer;font-size:11.5px;line-height:1.5;transition:border-color .12s ease,transform .08s ease;
+}
+.dcard:hover{transform:translateY(-1px)}
+.dcard.on{background:rgba(200,164,92,.10);box-shadow:0 0 0 1px rgba(200,164,92,.35) inset}
+.dcard.locked{opacity:.55;cursor:not-allowed}
+.dcard .dn{font-size:13px;letter-spacing:1px}
+.dcard .dn .dr{font-size:10px;margin-left:4px;opacity:.7}
+.dcard .dd{color:#8c8272;font-size:10.5px;margin-top:2px}
+.dcard .dl{margin-top:4px;color:#8ce07a;font-size:10.5px}
+.dcard .dl.bad{color:#ff8f8f}
 #panel-respec{left:50%;top:50%;transform:translate(-50%,-50%);width:760px;max-width:96vw}
 #panel-skill{left:50%;top:50%;transform:translate(-50%,-50%);width:1040px;max-width:97vw}
 .rift-body{text-align:center}

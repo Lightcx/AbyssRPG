@@ -398,21 +398,21 @@
       const p = game.player;
       if (game.area !== 'town' && game.portalOpen) {
         const d = G.dist(p.x, p.y, m.stairs.x, m.stairs.y);
-        if (d < 110) R.prompt(ctx, m.stairs.x, m.stairs.y - 86, '按 F 进入下一层', '#ffe9a8');
+        if (d < 110) R.prompt(ctx, m.stairs.x, m.stairs.y - 86, '按 ' + G.Settings.actionLabel('pickup', 'F') + ' 进入下一层', '#ffe9a8');
       }
       if (game.area !== 'town' && m.townPortal && G.dist(p.x, p.y, m.townPortal.x, m.townPortal.y) < 90) {
-        R.prompt(ctx, m.townPortal.x, m.townPortal.y - 78, '按 F 返回城镇', '#9fd8ff');
+        R.prompt(ctx, m.townPortal.x, m.townPortal.y - 78, '按 ' + G.Settings.actionLabel('pickup', 'F') + ' 返回城镇', '#9fd8ff');
       }
       if (game.area === 'town') {
         if (m.gate && G.dist(p.x, p.y, m.gate.x, m.gate.y) < 110) {
-          R.prompt(ctx, m.gate.x, m.gate.y - 96, '按 F 进入深渊', '#c9a4ff');
+          R.prompt(ctx, m.gate.x, m.gate.y - 96, '按 ' + G.Settings.actionLabel('pickup', 'F') + ' 进入深渊', '#c9a4ff');
         }
         let near = null, nd = 1e9;
         (m.npcs || []).forEach((n) => {
           const d = G.dist(p.x, p.y, n.x, n.y);
           if (d < 120 && d < nd) { nd = d; near = n; }
         });
-        if (near) R.prompt(ctx, near.x, near.y - 58, '按 F 与「' + near.name + '」交谈', '#ffe9a8');
+        if (near) R.prompt(ctx, near.x, near.y - 58, '按 ' + G.Settings.actionLabel('pickup', 'F') + ' 与「' + near.name + '」交谈', '#ffe9a8');
       }
     }
 

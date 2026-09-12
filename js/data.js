@@ -10,11 +10,14 @@
 
   /* ---------------- 平衡常量（想改数值先改这里） ---------------- */
   G.BALANCE = {
-    monsterLifeExp: 1.023,     // 怪物生命随怪物等级指数增长
-    monsterDmgExp: 1.026,      // 怪物伤害
+    /* 怪物生命 / 伤害随等级的指数增长。
+     * 掉落品质提升（高级以多词缀黄装与暗金为主）后，玩家长线输出成长是乘法叠乘的，
+     * 所以这里的指数要跟上：1.031 大致让「终点进度」的击杀时间回到 5 秒以上。 */
+    monsterLifeExp: 1.044,     // 怪物生命随怪物等级指数增长
+    monsterDmgExp: 1.028,      // 怪物伤害
     monsterXpExp: 1.075,       // 怪物经验
-    eliteLife: 3.0, eliteDmg: 1.3,
-    bossLife: 6,               // BOSS 生命倍率（相对同等级普通怪）
+    eliteLife: 3.6, eliteDmg: 1.3,
+    bossLife: 12,              // BOSS 生命倍率（相对同等级普通怪）
     bossXp: 9,
     playerBaseSpeed: 168,
     xpCurve: (lv) => Math.floor(60 * Math.pow(lv, 1.62)),
@@ -23,8 +26,11 @@
     goldBase: 14,
   };
 
-  // 怪物等级：随层数与难度提升
-  G.mlvlOf = (floor, diffIdx) => Math.max(1, Math.round(1 + floor * 1.2 + (diffIdx || 0) * 5));
+  // 怪物等级：**层数**是主项，难度只在此之上加少量等级
+  G.mlvlOf = function (floor, diffIdx) {
+    const add = (D.DIFFICULTIES[G.clamp(diffIdx | 0, 0, D.DIFFICULTIES.length - 1)] || {}).mlvlAdd || 0;
+    return Math.max(1, Math.round(1 + floor * 1.2 + add));
+  };
   // 击杀经验
   G.xpForMonster = function (mlvl, kind, diffIdx) {
     const B = G.BALANCE;
@@ -134,7 +140,7 @@
 
   /* 双手武器的「两手预算」倍率：
    * 双手武器一次占掉主手 + 副手，所以基底数值与词缀数值都按单手的 2 倍给，
-   * 孔位上限也等于「单手武器上限 + 副手上限」（4 + 4 = 8）。 */
+   * 孔位上限也等于「单手武器上限 + 副手上限」（2 + 2 = 4）。 */
   D.TWO_HAND_MULT = 2;
 
   // 数值只看 (min+max)/2 的均值；双手武器的均值按「单手 ×2」的 DPS 目标反推
@@ -789,15 +795,27 @@
   D.classById = (id) => D.classMap[id] || null;
   D.activeSkills = (cls) => { const c = D.classById(cls); return c ? c.skills.slice(1) : []; };
 
-  /* ---------------- 难度 ---------------- */
+  /* ---------------- 难度 ----------------
+   * 与「深渊层数」彻底分开：
+   *   · 层数只决定怪物等级（见 G.mlvlOf）
+   *   · 难度在层数之上叠加怪物生命 / 伤害 / 掉落率 / 掉落品质
+   * 解锁：在当前难度击败「下一个 5 的倍数层」的深渊领主，即可解锁下一档
+   *   （普通 通关 5 层 → 专家；专家 通关 10 层 → 噩梦 ……）
+   */
   D.DIFFICULTIES = [
-    { name: '普通', roman: 'I', hp: 1.0, dmg: 1.0, xp: 1.0, drop: 1.0, resistPen: 0, color: '#cbb894' },
-    { name: '噩梦', roman: 'II', hp: 1.9, dmg: 1.3, xp: 1.8, drop: 1.5, resistPen: 20, color: '#7aa8ff' },
-    { name: '地狱', roman: 'III', hp: 3.6, dmg: 1.7, xp: 3.2, drop: 2.3, resistPen: 45, color: '#ff8a3c' },
-    { name: '炼狱', roman: 'IV', hp: 6.5, dmg: 2.2, xp: 5.5, drop: 3.4, resistPen: 70, color: '#ff4a4a' },
-    { name: '湮灭', roman: 'V', hp: 11, dmg: 2.8, xp: 9, drop: 4.8, resistPen: 90, color: '#c07aff' },
+    { name: '普通', roman: 'I', hp: 1.0, dmg: 1.0, xp: 1.0, drop: 1.0, quality: 0, mlvlAdd: 0, resistPen: 0, color: '#cbb894' },
+    { name: '专家', roman: 'II', hp: 1.5, dmg: 1.2, xp: 1.5, drop: 1.35, quality: 1, mlvlAdd: 1, resistPen: 10, color: '#8ce07a' },
+    { name: '噩梦', roman: 'III', hp: 2.4, dmg: 1.45, xp: 2.2, drop: 1.8, quality: 2, mlvlAdd: 2, resistPen: 22, color: '#7aa8ff' },
+    { name: '地狱', roman: 'IV', hp: 3.8, dmg: 1.75, xp: 3.4, drop: 2.4, quality: 3, mlvlAdd: 3, resistPen: 38, color: '#ff8a3c' },
+    { name: '炼狱', roman: 'V', hp: 6.0, dmg: 2.1, xp: 5.2, drop: 3.2, quality: 4, mlvlAdd: 4, resistPen: 58, color: '#ff4a4a' },
+    { name: '湮灭', roman: 'VI', hp: 9.5, dmg: 2.5, xp: 8.0, drop: 4.2, quality: 5, mlvlAdd: 5, resistPen: 78, color: '#c07aff' },
   ];
   D.diffOf = (idx) => D.DIFFICULTIES[G.clamp(idx | 0, 0, D.DIFFICULTIES.length - 1)];
+  /* 生物定义查表（怪物或 BOSS），用于从存档里还原实体 */
+  D.defById = (id) => D.monsterById[id] || D.BOSSES.filter((b) => b.id === id)[0] || null;
+  /* 解锁第 i 档难度需要在第 i-1 档打到第 unlockFloor 层的领主 */
+  D.diffUnlock = (idx) => ({ diff: idx - 1, floor: 5 * idx });
+  D.MAX_DIFF = D.DIFFICULTIES.length - 1;
 
   /* ---------------- 被动 ---------------- */
   D.PASSIVES = [
@@ -820,11 +838,11 @@
   D.ORBS = [
     {
       id: 'ascend', name: '晋升石', icon: '◈', color: '#7f9dff', tier: 1, weight: 130, minMlvl: 1, price: 220,
-      use: '普通 → 魔法', desc: '把白色（普通）装备提升为蓝色（魔法）装备，并附加 1-2 条随机词缀。',
+      use: '普通 → 魔法', desc: '把普通装备提升为魔法装备，并增加随机词缀。',
     },
     {
       id: 'augment', name: '增幅石', icon: '✦', color: '#8fd0ff', tier: 1, weight: 100, minMlvl: 3, price: 260,
-      use: '装备 +1 词缀', desc: '为词缀未满的装备追加 1 条随机词缀（蓝装上限 1+1，黄装上限 3+3）。',
+      use: '装备 +1 词缀', desc: '为词缀未满的装备增加 1 条随机词缀。',
     },
     {
       id: 'purify', name: '净化石', icon: '○', color: '#d6d2cc', tier: 1, weight: 115, minMlvl: 1, price: 150,
@@ -832,27 +850,29 @@
     },
     {
       id: 'refine', name: '炼化石', icon: '❖', color: '#ffe45c', tier: 2, weight: 78, minMlvl: 8, price: 900,
-      use: '魔法 → 稀有', desc: '把蓝色（魔法）装备提升为黄色（稀有）装备，并把词缀补足到 3-5 条。',
+      use: '魔法 → 稀有', desc: '把魔法装备提升为稀有装备，并增加随机词缀。',
     },
     {
       id: 'chaos', name: '混沌石', icon: '✹', color: '#ff8a3c', tier: 2, weight: 62, minMlvl: 10, price: 1200,
-      use: '重掷全部词缀', desc: '重掷稀有/魔法装备上的全部词缀：词缀种类与数值完全重来，稀有度与孔位保留。',
+      use: '重掷全部词缀', desc: '重掷装备上的全部词缀。不改变装备稀有度或孔位。',
     },
     {
       id: 'fracture', name: '裂解石', icon: '✂', color: '#c07aff', tier: 2, weight: 76, minMlvl: 8, price: 700,
-      use: '移除 1 条词缀', desc: '随机移除装备上的一条词缀，其余词缀的数值保持不变。',
+      use: '移除 1 条词缀', desc: '随机移除装备上的一条词缀。',
     },
     {
       id: 'whetstone', name: '点金石', icon: '✧', color: '#8ce07a', tier: 2, weight: 72, minMlvl: 6, price: 800,
-      use: '提升数值', desc: '在装备自身的数值上限与词缀所属档位的上限之内，提升装备的基础数值与词缀数值。',
+      use: '提升数值', desc: '提升装备基底与词缀的数值。',
     },
     {
       id: 'drill', name: '钻孔石', icon: '⊙', color: '#e8d5b5', tier: 2, weight: 58, minMlvl: 12, price: 650,
-      use: '+1 孔位', desc: '为装备额外打出一个镶嵌孔（单手装备最多 4 孔，双手武器最多 8 孔）。',
+      use: '+1 孔位', desc: '为装备增加一个孔位。',
     },
     {
       id: 'legend', name: '传说石', icon: '★', color: '#d98b2b', tier: 3, weight: 22, minMlvl: 22, price: 3600,
-      use: '黄装 → 传奇', desc: '为稀有装备注入一条随机的暗金特效，使其成为保留原有词缀的传奇装备。',
+      use: '黄装 → 传奇',
+      // desc 里的换行会原样显示（#tooltip .tflavor 用了 white-space:pre-line）
+      desc: '为稀有装备注入一条随机的暗金特效，保留装备自身词缀。\n对已被注入的装备重复使用则会刷新其暗金特效。',
     },
   ];
   D.orbById = {}; D.ORBS.forEach((o) => { D.orbById[o.id] = o; });

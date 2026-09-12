@@ -31,14 +31,28 @@
    */
   L.isTwoHand = (item) => !!(item && item.slot === 'weapon' && item.two);
   L.affixMult = (item) => (L.isTwoHand(item) ? (D.TWO_HAND_MULT || 2) : 1);
-  // 掉落时的孔位上限：普通装备随物品等级 2 / 3 / 4，双手武器翻倍
+
+  /* 各部位的最大孔位数（掉落与钻孔石的共同上限）
+   *   主手 / 副手 / 头盔 / 靴子 / 手套 / 腰带 …… 2 孔
+   *   胸甲 3 孔，戒指 1 孔，项链 2 孔
+   *   双手武器 = 主手 + 副手 = 4 孔
+   */
+  D.SOCKET_MAX = { weapon: 2, offhand: 2, helm: 2, boots: 2, gloves: 2, belt: 2, chest: 3, ring: 1, amulet: 2 };
+  L.socketMax = function (item) {
+    if (!item) return 0;
+    if (L.isTwoHand(item)) return 2 * (D.SOCKET_MAX.weapon || 2);   // 双手武器 = 主手 2 + 副手 2
+    const base = D.SOCKET_MAX[item.slot];
+    return base == null ? 2 : base;
+  };
+  /* 掉落时的孔位上限：低等级装备还开不满，随物品等级线性放开到该部位的上限
+   * （ilvl 1 时最多 1 孔，ilvl 55 以上才可能满孔） */
   L.socketCap = function (item, ilvl) {
     const lv = ilvl != null ? ilvl : ((item && item.ilvl) || 1);
-    const base = lv > 55 ? 4 : lv > 30 ? 3 : 2;
-    return L.isTwoHand(item) ? base * (D.TWO_HAND_MULT || 2) : base;
+    const max = L.socketMax(item);
+    if (max <= 1) return max;
+    const opened = lv <= 1 ? 1 : Math.min(max, 1 + Math.floor((lv - 1) / 20));
+    return Math.max(1, opened);
   };
-  // 钻孔石的硬上限：单手装备 4 孔，双手武器 8 孔（= 单手武器 4 + 副手 4）
-  L.socketMax = (item) => (L.isTwoHand(item) ? 4 * (D.TWO_HAND_MULT || 2) : 4);
 
   /* 词缀在指定物品等级下的档位与数值范围（做装与提示框共用）
    * idx  内部 0 基下标：0 = 最低档（物品等级 1），越大越强
@@ -81,26 +95,69 @@
     return { lo: L.roundStat(entry.stat, r.lo * k), hi: L.roundStat(entry.stat, r.hi * k), tier: r.tier, maxTier: r.maxTier };
   };
 
-  /* ---------------- 稀有度 ---------------- */
+  /* ---------------- 稀有度 ----------------
+   * 掉落品质由「深渊层数」与「难度等级」共同推进：
+   *   层数决定这一档能出什么（解锁阶段），难度在其上再推一档并放大高稀有度权重
+   *   阶段（由层数决定，diffQuality 可再往前推）：
+   *     0  1-10 层    白装为主，蓝装少量，黄装罕见，暗金是惊喜
+   *     1  11-25 层   蓝装为主，白装明显变少，词缀不满的黄装开始出现
+   *     2  26-40 层   蓝黄并重，满词缀黄装出现，暗金小概率
+   *     3  41-55 层   黄装为主，白装基本绝迹，暗金稳定出现
+   *     4  56+ 层     多词缀黄装与暗金为主
+   */
+  L.rarityStage = function (floor, diffQuality) {
+    const f = Math.max(1, floor | 0);
+    if (f <= 10) return G.clamp(diffQuality | 0, 0, 4);
+    if (f <= 25) return G.clamp(1 + (diffQuality | 0), 0, 4);
+    if (f <= 40) return G.clamp(2 + (diffQuality | 0), 0, 4);
+    if (f <= 55) return G.clamp(3 + (diffQuality | 0), 0, 4);
+    return 4;
+  };
+
   L.rollRarity = function (rng, opts) {
     const mf = opts.mf || 0;
     const ilvl = opts.ilvl || 1;
     const mfMul = 1 + mf / 100;
+    const stage = G.clamp(opts.stage | 0, 0, 4);
+    // 每个阶段的四档权重（白 / 蓝 / 黄 / 暗金）
+    const STAGE_W = [
+      { common: 100, magic: 20, rare: 3.0, unique: 0.35 },
+      { common: 42, magic: 100, rare: 15, unique: 0.9 },
+      { common: 16, magic: 78, rare: 52, unique: 2.2 },
+      { common: 6, magic: 46, rare: 100, unique: 5.0 },
+      { common: 1.5, magic: 22, rare: 120, unique: 11 },
+    ];
+    const base = STAGE_W[stage];
     const w = {
-      common: 100,
-      magic: (26 + ilvl * 0.55) * mfMul,
-      rare: (5 + ilvl * 0.40) * mfMul,
-      unique: (0.9 + ilvl * 0.075) * mfMul,
+      common: base.common,
+      magic: base.magic * mfMul,
+      rare: base.rare * mfMul,
+      unique: base.unique * mfMul,
     };
+    // 物品等级只做轻微加成，避免高 ilvl 直接碾压阶段曲线
+    const lvK = 1 + ilvl * 0.006;
+    w.magic *= lvK; w.rare *= lvK * lvK; w.unique *= lvK * lvK;
     if (opts.rarityBonus) { w.magic *= opts.rarityBonus; w.rare *= opts.rarityBonus; w.unique *= opts.rarityBonus; }
     if (opts.noCommon) w.common = 0;
+    if (opts.minRarity) {
+      const order = ['common', 'magic', 'rare', 'unique'];
+      const from = order.indexOf(opts.minRarity);
+      order.slice(0, from).forEach((k) => { w[k] = 0; });
+    }
     return rng.weighted(['common', 'magic', 'rare', 'unique'], (k) => w[k]);
   };
 
-  L.rarityAffixCount = function (rng, rarity, ilvl) {
+  /* 词缀条数：阶段越高越容易掷满（黄装 3-6 条，满档 6 条 = 3 前 + 3 后） */
+  L.rarityAffixCount = function (rng, rarity, ilvl, stage) {
+    const st = G.clamp(stage | 0, 0, 4);
     switch (rarity) {
-      case 'magic': return rng.int(1, 2);                                        // 上限 1 前缀 + 1 后缀
-      case 'rare': return G.clamp(rng.int(3, 4) + (ilvl > 45 && rng.chance(0.4) ? 1 : 0), 3, 6);  // 上限 3 + 3
+      case 'magic': return rng.int(1, 2);                       // 上限 1 前缀 + 1 后缀
+      case 'rare': {
+        // 低阶段偏少词缀，高阶段稳定 5-6 条
+        const lo = [3, 3, 4, 4, 5][st];
+        const hi = [4, 4, 5, 6, 6][st];
+        return G.clamp(rng.int(lo, hi), 3, 6);
+      }
       default: return 0;
     }
   };
@@ -121,7 +178,8 @@
   L.canAddAny = (item) => L.canAddKind(item, 'prefix') || L.canAddKind(item, 'suffix');
 
   L.rollSockets = function (rng, rarity, slot, ilvl, two) {
-    if (['ring', 'amulet', 'belt', 'gloves', 'boots'].indexOf(slot) >= 0 && rng.chance(0.75)) return 0;
+    // 戒指 / 项链 / 腰带 / 手套 / 靴子 这类小件多半没有孔
+    if (['ring', 'amulet', 'belt', 'gloves', 'boots'].indexOf(slot) >= 0 && rng.chance(0.72)) return 0;
     const max = L.socketCap({ slot: slot, two: !!two, ilvl: ilvl }, ilvl);
     let p = 0;
     if (rarity === 'common') p = 0.05;
@@ -129,9 +187,8 @@
     else if (rarity === 'rare') p = 0.42;
     else p = 0.7;
     if (!rng.chance(p)) return 0;
-    // 单手装备沿用 1-4 的权重表（保持随机数序列不变），双手武器扩展到 1-8
-    const opts = max > 4 ? [1, 2, 3, 4, 5, 6, 7, 8] : [1, 2, 3, 4];
-    const n = rng.weighted(opts, (k) => (k > max ? 0 : 1 / k));
+    // 全装备统一 1-4 的权重表（越少见的孔位越容易出），实际数量再被该部位上限裁剪
+    const n = rng.weighted([1, 2, 3, 4], (k) => (k > max ? 0 : 1 / k));
     return n;
   };
 
@@ -334,7 +391,10 @@
       // 偏向 ilvl 接近的基底
       base = rng.weighted(pool, (b) => 1 / (1 + Math.abs(b.ilvl - ilvl) * 0.35));
     }
-    const rarity = opts.rarity || L.rollRarity(rng, { mf: opts.mf, ilvl, rarityBonus: opts.rarityBonus, noCommon: opts.noCommon });
+    const rarity = opts.rarity || L.rollRarity(rng, {
+      mf: opts.mf, ilvl, rarityBonus: opts.rarityBonus, noCommon: opts.noCommon,
+      stage: opts.stage, minRarity: opts.minRarity,
+    });
     const item = {
       uid: G.uid(), cat: 'equip', base: base.id, slot: base.slot, type: base.type, kind: base.kind, two: !!base.two,
       ilvl, rarity, min: 0, max: 0, aps: base.aps, armor: 0,
@@ -361,7 +421,7 @@
     }
 
     if (item.rarity === 'magic' || item.rarity === 'rare') {
-      const count = L.rarityAffixCount(rng, item.rarity, ilvl);
+      const count = L.rarityAffixCount(rng, item.rarity, ilvl, opts.stage);
       L.rollAffixesForDrop(rng, item, count, { cls: opts.cls });
     }
     if (item.rarity === 'rare') item.name = rng.pick(RARE_WORDS_A) + rng.pick(RARE_WORDS_B);
@@ -446,7 +506,12 @@
         const cap = L.socketMax(item);
         return (item.sockets | 0) >= cap ? { ok: false, why: '孔位已达上限（' + cap + ' 孔）' } : { ok: true };
       }
-      case 'legend': return r === 'rare' ? { ok: true } : { ok: false, why: '只能用于稀有（黄色）装备' };
+      case 'legend': {
+        // 黄装 → 传奇；已经注入过暗金特效的装备可以再用一次，用来刷新特效
+        if (r === 'rare') return { ok: true };
+        if (item.power && !item.unique) return { ok: true };
+        return { ok: false, why: '只能用于稀有（黄色）装备，或已注入暗金特效的装备' };
+      }
       default: return { ok: false, why: '未知通货' };
     }
   };
@@ -554,13 +619,14 @@
         break;
       }
       case 'legend': {
+        const refresh = !!item.power;
         const used = {};
         if (item.power) used[item.power] = true;
         const pool = Object.keys(D.POWER_NAME).filter((p) => !used[p]);
-        const pw = rng.pick(pool);
+        const pw = rng.pick(pool) || item.power;
         item.power = pw;
         item.rarity = 'unique';
-        lines.push('获得暗金特效：【' + D.POWER_NAME[pw] + '】' + D.POWER_TEXT[pw]);
+        lines.push((refresh ? '刷新暗金特效' : '获得暗金特效') + '：【' + D.POWER_NAME[pw] + '】' + D.POWER_TEXT[pw]);
         break;
       }
       default: return { ok: false, msg: '未知通货', lines: [] };
@@ -612,11 +678,13 @@
       out.push(L.makeGold(amt));
     }
     const dropQty = o.kind === 'boss' ? rng.int(4, 7) : o.kind === 'elite' ? rng.int(1, 2) : rng.chance(G.BALANCE.dropBase * mult) ? 1 : 0;
+    const stage = L.rarityStage(o.floor || 1, o.diffQuality | 0);
     for (let i = 0; i < dropQty; i++) {
       out.push(L.makeItem(rng, {
         ilvl, mf: mf * (o.kind === 'boss' ? 1.6 : o.kind === 'elite' ? 1.25 : 1),
         rarityBonus: o.kind === 'boss' ? 2.2 : o.kind === 'elite' ? 1.4 : 1,
         noCommon: o.kind === 'boss' && rng.chance(0.7), cls: o.cls,
+        stage: stage, minRarity: o.kind === 'boss' && stage >= 2 ? 'magic' : null,
       }));
     }
     const potionChance = o.kind === 'boss' ? 1 : o.kind === 'elite' ? 0.5 : 0.16;
@@ -668,6 +736,8 @@
     const tierTxt = ti >= 0 && D.TIER_NAMES[ti] ? ' · ' + D.TIER_NAMES[ti] : '';
     if (item.slot === 'weapon') return two + (wt ? wt.label : '武器') + tierTxt;
     if (item.slot === 'offhand') return (item.type === 'shield' ? '盾牌' : item.type === 'orb' ? '法器' : '箭袋') + tierTxt;
+    // 戒指的装备槽位是 ring1 / ring2，物品自身的 slot 是 ring，这里单独给个名字
+    if (item.slot === 'ring') return '戒指' + tierTxt;
     const s = D.SLOT_BY_ID[item.slot];
     return (s ? s.name : '装备') + tierTxt;
   };
@@ -703,6 +773,23 @@
     }
     s += (item.armor || 0) * 0.14 * (1 + (all.armorPct || 0) / 100);
     return Math.round(s);
+  };
+
+  /* 这把武器自身的每秒伤害（只看这件装备）
+   * = （物理均值 ×（1 + 增伤词缀）+ 附加元素伤害折算） × 攻速（含装备自身的攻速词缀）
+   * 之前漏掉了「附加 X 点元素伤害」这一块，这里补上。 */
+  L.itemDps = function (item) {
+    if (!item || item.slot !== 'weapon') return 0;
+    const all = G.Stats.itemStats(item);
+    const bonus = 1 + (all.dmgPct || 0) / 100 + (all.physDmg || 0) / 100;
+    const phys = (item.min + item.max) / 2 * bonus;
+    let add = 0;
+    add += (all.addFire || 0) * 0.9;
+    add += (all.addCold || 0) * 0.9;
+    add += (all.addLight || 0) * 0.9;
+    add += (all.addPoison || 0) * 0.9;
+    const aps = item.aps * (1 + (all.aps || 0) / 100);
+    return (phys + add) * Math.max(0.2, aps);
   };
 
   L.price = function (item) {
@@ -828,6 +915,15 @@
     });
   };
 
+  /* 装备对比里的小徽章：▲ 提升 / ▼ 下降 / = 持平（没有对比对象时返回空串） */
+  function UI_cmpBadge(delta) {
+    if (delta == null || !isFinite(delta)) return '';
+    const d = Math.round(delta);
+    if (d === 0) return ' <span class="cmp eq">＝</span>';
+    return ' <span class="cmp ' + (d > 0 ? 'up' : 'down') + '">' + (d > 0 ? '▲ +' : '▼ ') + d + '</span>';
+  }
+  L.cmpBadge = UI_cmpBadge;
+
   L.tooltipHTML = function (item, player, opts) {
     opts = opts || {};
     if (!item) return '';
@@ -840,7 +936,7 @@
       h += '<div class="ttype">做装通货　<span class="orb-use">' + o.use + '</span></div><div class="tsep"></div>';
       h += '<div class="tflavor">' + o.desc + '</div>';
       h += '<div class="tsep"></div><div class="tsock">在城镇【秘法工坊】中对装备使用（快捷键 G）。</div>';
-      h += '<div class="tprice">售价 ' + L.price(item) + ' 金币</div>';
+      h += '<div class="tprice">金币 <b>' + L.price(item) + '</b></div>';
       return h;
     }
     if (item.cat === 'gem') {
@@ -850,7 +946,7 @@
       h += '<div class="tsock">镶嵌于带孔装备：</div>';
       h += '<div class="tstat">' + D.statText(st.stat, st.value) + '</div>';
       h += '<div class="tsep"></div><div class="tflavor">右键选中，再左键点击带孔装备即可镶嵌。</div>';
-      h += '<div class="tprice">售价 ' + L.price(item) + ' 金币</div>';
+      h += '<div class="tprice">金币 <b>' + L.price(item) + '</b></div>';
       return h;
     }
     if (item.cat === 'potion') {
@@ -858,21 +954,24 @@
       h += '<div class="tname" style="color:' + p.color + '">' + item.name + '</div>';
       h += '<div class="ttype">药水</div><div class="tsep"></div>';
       h += '<div class="tstat good">立即恢复 ' + p.vals[item.tier] + ' 点' + (item.potion === 'life' ? '生命' : '法力') + '</div>';
-      h += '<div class="tprice">售价 ' + L.price(item) + ' 金币</div>';
+      h += '<div class="tprice">金币 <b>' + L.price(item) + '</b></div>';
       return h;
     }
     if (item.cat === 'gold') return '<div class="tname" style="color:#ffe9a8">' + item.amount + ' 金币</div>';
 
     L.ensureCaps(item);
     const cap = item.baseCap;
-    h += '<div class="tname" style="color:' + col + '">' + L.displayName(item) + '</div>';
+    // 名称行右侧挂「装备评分」，一眼看出这件装备值不值
+    h += '<div class="tname" style="color:' + col + '"><span class="tnm">' + L.displayName(item) + '</span>' +
+      (item.cat === 'equip' ? '<span class="tscore">装备评分 <b>' + L.score(item, player && player.stats) + '</b></span>' : '') +
+      '</div>';
     h += '<div class="ttype">' + L.typeName(item) + '　<span style="color:' + col + '">' + G.RARITY_NAME[item.rarity] + '</span>　物品等级 ' + item.ilvl + '</div>';
     // 武器伤害
     if (item.slot === 'weapon') {
       const all = G.Stats.itemStats(item);
       const bonus = 1 + (all.dmgPct || 0) / 100 + (all.physDmg || 0) / 100;
       const mn = item.min * bonus, mx = item.max * bonus;
-      const aps = item.aps;
+      const aps = item.aps * (1 + (all.aps || 0) / 100);
       let elems = '';
       [['addFire', 'fire', '火焰'], ['addCold', 'cold', '冰冷'], ['addLight', 'lightning', '闪电'], ['addPoison', 'poison', '毒素']].forEach((e) => {
         const v = all[e[0]] | 0;
@@ -883,16 +982,18 @@
       h += '<div class="tstat base"><span class="av">' + Math.round(mn) + '–' + Math.round(mx) + ' 伤害</span>' +
         (cap ? '<span class="arng" title="该基底在此物品等级可能出现的伤害区间">' +
           L.baseRangeText(item, bonus) + '</span>' : '') + '</div>';
-      h += '<div class="tstat dim">' + aps.toFixed(2) + ' 攻击/秒　每秒伤害 ' + Math.round((mn + mx) / 2 * aps) + '</div>';
+      h += '<div class="tstat dim">' + aps.toFixed(2) + ' 攻击/秒　每秒伤害 ' +
+        Math.round(L.itemDps(item)) + UI_cmpBadge(opts.versus && opts.versus.dps) + '</div>';
       h += elems;
-      if (item.two) {
-        h += '<div class="tstat dim">双手武器：占主手 + 副手两个位置，基底与词缀数值为单手的 ' +
-          (D.TWO_HAND_MULT || 2) + ' 倍，孔位上限 ' + L.socketMax(item) + '</div>';
-      }
     } else if (item.armor > 0) {
       h += '<div class="tsep"></div><div class="tstat base"><span class="av">' + Math.round(item.armor) + ' 护甲</span>' +
         (cap && cap.armor ? '<span class="arng" title="该基底在此物品等级可能出现的数值范围">' +
           L.baseRangeText(item) + '</span>' : '') + '</div>';
+    }
+    /* 坚韧：非武器（护甲 / 副手 / 首饰）参与装备对比时给出换装后的坚韧与增减 */
+    if (item.cat === 'equip' && item.slot !== 'weapon' && opts.tough) {
+      h += '<div class="tstat tough">坚韧 <b>' + Math.round(opts.tough.value) + '</b>' +
+        UI_cmpBadge(opts.tough.delta) + '</div>';
     }
     // 固有属性
     if (item.implicit && item.implicit.length) {
@@ -972,7 +1073,9 @@
       }
     }
     if (item.craftCount) h += '<div class="tcraft dim small">已做装 ' + item.craftCount + ' 次</div>';
-    h += '<div class="tprice">售价 ' + L.price(item) + ' 金币</div>';
+    // 金币价值 / 残晶价值（只算基础分解量，不含铁匠铺的额外加成）
+    h += '<div class="tprice">金币 <b>' + L.price(item) + '</b>' +
+      (item.cat === 'equip' ? '　残晶 <b>' + L.salvageYield(item) + '</b>' : '') + '</div>';
     return h;
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

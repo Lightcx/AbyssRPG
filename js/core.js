@@ -7,7 +7,7 @@
   'use strict';
   const G = (root.G = root.G || {});
   /* 版本号：与根目录 CHANGELOG.md 里最新的一条保持一致（tools/smoke.js 会校验） */
-  G.VERSION = '0.0.1';
+  G.VERSION = '0.1.0';
   G.VERSION_TAG = 'v' + G.VERSION;
   G.HEADLESS = !!root.__HEADLESS__;
 
@@ -477,6 +477,13 @@
       if (/^Numpad[0-9]$/.test(code)) return '小键盘' + code.slice(6);
       if (/^F[0-9]{1,2}$/.test(code)) return code;
       return code;
+    },
+    /* 某个动作当前绑定键的显示名 —— 界面上的按键提示统一走这里，
+     * 这样改键之后所有提示都会跟着变（见 G.UI.refreshKeyHints） */
+    actionLabel(action, fallback) {
+      const c = Settings.getBind(action);
+      if (!c) return fallback == null ? '未绑定' : fallback;
+      return Settings.keyLabel(c);
     },
     /* 统一的“按下 / 按住”查询（同时处理键盘与鼠标绑定） */
     down(action) {

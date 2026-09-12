@@ -122,6 +122,7 @@
     const p = {
       kind: 'player', cls: clsId, color: cls.color, r: 13,
       level: 1, xp: 0, gold: 120, shards: 0,
+      diffUnlocked: 0, diffCleared: {},
       attrPoints: 0, skillPoints: 0, passivePoints: 0,
       skillBranches: {}, guideMet: false,
       alloc: { str: 0, dex: 0, int: 0, vit: 0 },
@@ -889,6 +890,7 @@
         mlvl: isChest ? mlvl + 4 : mlvl, mf: game.player.stats.mf, gf: game.player.stats.gf,
         plvl: game.player.level,
         kind: isChest ? 'elite' : 'normal', mult: isChest ? 3.2 : 0.55, cls: game.player.cls,
+        floor: game.floor, diffQuality: D.diffOf(game.diffIdx).quality,
         orbBonus: G.Town.orbBonus(game.player),
         shardBonus: G.Town.shardBonus(game.player),
       });

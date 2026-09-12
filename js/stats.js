@@ -263,7 +263,12 @@
     } else {
       st.weaponMin = 4; st.weaponMax = 9; st.attackSpeed = 1.25 * st.apsMul; st.weaponKind = 'melee';
     }
-    st.weaponDps = (st.weaponMin + st.weaponMax) / 2 * st.attackSpeed;
+    /* 秒伤 = （武器物理均值 + 装备附加的元素伤害折算） × 攻速
+     * 附加元素按 attackComponents 里同一套折算：×0.9 再乘元素加成 */
+    let addedAvg = 0;
+    for (const k in st.added) addedAvg += (st.added[k] || 0) * 0.9 * (1 + (st.elemBonus[k] || 0));
+    st.addedAvg = addedAvg;
+    st.weaponDps = ((st.weaponMin + st.weaponMax) / 2 + addedAvg) * st.attackSpeed;
     st.attackInterval = 1 / Math.max(0.2, st.attackSpeed);
 
     /* ---- 暗金特效带来的被动加成 ---- */
@@ -303,6 +308,55 @@
   S.armorMitigation = (armor, attackerLevel) => {
     const a = Math.max(0, armor);
     return a / (a + 55 + 15 * (attackerLevel || 1));
+  };
+
+  /* ---------------- 坚韧 ----------------
+   * 定义：满血时平均能承受的「减伤前」伤害量。
+   *   对某一类伤害 = 生命 ÷ (1 − 该系减伤) ÷ (1 − 闪避) ÷ (1 − 受到伤害降低)
+   *   例：1000 生命 / 0 护甲 / 50% 毒抗 / 50% 闪避 → 物理与毒素各算一遍，毒素 = 1000÷50%÷50% = 4000
+   * 总坚韧 = 五类伤害（物理 + 火冰电毒）坚韧的平均值。
+   */
+  S.TOUGH_TYPES = ['physical', 'fire', 'cold', 'lightning', 'poison'];
+  S.TOUGH_NAME = { physical: '物理', fire: '火焰', cold: '冰冷', lightning: '闪电', poison: '毒素' };
+  S.toughness = function (player, mlvl) {
+    const st = player && player.stats;
+    if (!st) return { total: 0, byType: {}, life: 0 };
+    const lvl = mlvl || (G.GAME && G.GAME.mlvl) || player.level || 1;
+    const life = st.maxLife;
+    const dodge = G.clamp(st.dodge || 0, 0, 90) / 100;
+    const reduce = G.clamp(st.dmgReduce || 0, 0, 90) / 100;
+    const armorMit = S.armorMitigation(st.armor, lvl);
+    const byType = {};
+    let sum = 0;
+    S.TOUGH_TYPES.forEach((k) => {
+      const mit = k === 'physical' ? armorMit : S.resistMitigation(st.res[k] || 0);
+      const t = life / Math.max(0.05, 1 - mit) / Math.max(0.05, 1 - dodge) / Math.max(0.05, 1 - reduce);
+      byType[k] = t;
+      sum += t;
+    });
+    return {
+      total: sum / S.TOUGH_TYPES.length, byType: byType, life: life,
+      armor: st.armor, armorMit: armorMit, res: st.res, dodge: st.dodge || 0,
+      dmgReduce: st.dmgReduce || 0, mlvl: lvl,
+    };
+  };
+
+  /* 换上某件装备之后的坚韧（用于装备对比）。会临时换装 → 重算 → 原样还原。 */
+  S.toughnessWith = function (player, item, slot, mlvl) {
+    if (!player || !item || !slot || !player.gear) return null;
+    const gear = player.gear;
+    const prevItem = gear[slot], prevW = gear.weapon, prevOff = gear.offhand;
+    const life0 = player.life, mana0 = player.mana;
+    gear[slot] = item;
+    if (item.two && slot !== 'offhand') gear.offhand = null;                       // 双手武器顶掉副手
+    if (slot === 'offhand' && gear.weapon && gear.weapon.two) gear.weapon = null;  // 副手顶掉双手武器
+    S.derive(player);
+    const out = S.toughness(player, mlvl);
+    gear[slot] = prevItem; gear.weapon = prevW; gear.offhand = prevOff;
+    S.derive(player);
+    if (life0 != null) player.life = Math.min(life0, player.stats.maxLife);
+    if (mana0 != null) player.mana = Math.min(mana0, player.stats.maxMana);
+    return out;
   };
 
   /* ---------------- 伤害组件 ---------------- */

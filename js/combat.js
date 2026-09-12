@@ -437,6 +437,7 @@
       mlvl: m.mlvl, mf: p.stats.mf, gf: p.stats.gf, plvl: p.level,
       kind: m.isBoss ? 'boss' : m.elite ? 'elite' : 'normal',
       mult: diff.drop, cls: p.cls,
+      floor: game.floor, diffQuality: diff.quality,
       orbBonus: G.Town.orbBonus(p),
       shardBonus: G.Town.shardBonus(p),
     });

@@ -71,6 +71,7 @@
     UI.buildInventory();
     UI.buildSkillbar();
     UI.bindUtility();
+    UI.refreshKeyHints();
     UI.bindPanels();
     UI.bindMouse();
     UI.renderCharacter();
@@ -84,6 +85,7 @@
     UI.bindRift();
     UI.bindRespec();
     UI.bindSkillWindow();
+    UI.bindFilter();
     UI.bindSettings();
     if (root.document) {
       root.document.addEventListener('mousedown', (e) => {
@@ -118,19 +120,24 @@
     if (partners.length) {
       /* 左右并列、各自独立成窗（高度互不拉伸）：
        * 左「已穿戴装备」/ 右「新装备」，评分结论固定放在右窗底部 */
+      const vs = UI.compareVersus(p, item, partners);
       let h = '<div class="twin">';
       partners.forEach((e) => {
+        const side = vs.byItem[e.item.uid];
         h += '<div class="tcol old"><div class="tcol-hd">已穿戴装备' + (e.label ? ' · ' + e.label : '') + '</div>' +
-          '<div class="tcol-body">' + L.tooltipHTML(e.item, p, { compare: false }) + '</div></div>';
+          '<div class="tcol-body">' + L.tooltipHTML(e.item, p, { compare: false, versus: side, tough: side && side.tough }) + '</div></div>';
       });
+      const newSide = vs.byItem[item.uid];
       h += '<div class="tcol new"><div class="tcol-hd">新装备</div>' +
-        '<div class="tcol-body">' + L.tooltipHTML(item, p, { compare: false }) + '</div>' +
+        '<div class="tcol-body">' + L.tooltipHTML(item, p, { compare: false, versus: newSide, tough: newSide && newSide.tough }) + '</div>' +
         UI.compareFooterHTML(p, item) + '</div>';
       h += '</div>';
       tp.innerHTML = h;
       tp.className = 'wide';
     } else {
-      tp.innerHTML = L.tooltipHTML(item, p, opts);
+      const solo = UI.compareVersus(p, item, null);
+      const side = solo.byItem[item.uid];
+      tp.innerHTML = L.tooltipHTML(item, p, Object.assign({}, opts, { versus: side, tough: side && side.tough }));
       tp.className = '';
     }
     tp.hidden = false;
@@ -142,6 +149,85 @@
     if (y + h2 > vh - 8) y = Math.max(8, vh - h2 - 10);
     tp.style.left = x + 'px';
     tp.style.top = y + 'px';
+  };
+
+  /* ============================================================
+   *  装备对比：秒伤 / 坚韧 的差值计算
+   *  ------------------------------------------------------------
+   *  返回 { mlvl, cur: {dps, tough}, byItem: { [uid]: { dps, tough } } }
+   *  每个窗口拿到「这件装备自己的数值」与「相对另一件的差值」。
+   * ============================================================ */
+  UI.compareVersus = function (p, item, partners) {
+    const out = { mlvl: 1, byItem: {} };
+    if (!p || !item || item.cat !== 'equip') return out;
+    const mlvl = (UI.game && UI.game.mlvl) || p.level || 1;
+    out.mlvl = mlvl;
+    const other = (partners && partners[0]) ? partners[0].item : null;
+    const otherSlot = (partners && partners[0]) ? partners[0].slot : null;
+
+    /* --- 武器：秒伤（含附加元素伤害） --- */
+    if (item.slot === 'weapon' || (other && other.slot === 'weapon')) {
+      const dpsNew = L.itemDps(item.slot === 'weapon' ? item : null);
+      const dpsOld = L.itemDps(other && other.slot === 'weapon' ? other : null);
+      if (item.slot === 'weapon' && other && other.slot === 'weapon') {
+        out.byItem[item.uid] = { dps: dpsNew - dpsOld };
+        out.byItem[other.uid] = { dps: dpsOld - dpsNew };
+      } else if (item.slot === 'weapon') {
+        out.byItem[item.uid] = { dps: null };            // 没有对照武器时不显示差值
+      }
+    }
+
+    /* --- 非武器：坚韧（换上之后 vs 当前） --- */
+    if (item.slot !== 'weapon') {
+      const cur = S.toughness(p, mlvl).total;
+      // 戒指有两个槽位：先看它是不是已经戴在身上，否则优先和戒指 I 比
+      let slot = item.slot;
+      if (item.slot === 'ring') {
+        if (p.gear.ring1 && p.gear.ring1.uid === item.uid) slot = 'ring1';
+        else if (p.gear.ring2 && p.gear.ring2.uid === item.uid) slot = 'ring2';
+        else slot = p.gear.ring1 ? 'ring1' : 'ring2';
+      }
+      // 悬停的就是身上穿着的那件时，别显示「和它自己比」的差值
+      const eq = (item.slot === 'ring' ? p.gear[slot] : p.gear[item.slot]);
+      const isSelf = !!(eq && eq.uid === item.uid);
+      const tNew = S.toughnessWith(p, item, slot, mlvl);
+      const newTotal = tNew ? tNew.total : cur;
+      out.byItem[item.uid] = Object.assign(out.byItem[item.uid] || {}, {
+        tough: { value: newTotal, delta: isSelf ? null : newTotal - cur, cur: cur, detail: tNew, self: isSelf },
+      });
+      if (other && other.slot !== 'weapon') {
+        const tOld = S.toughnessWith(p, other, otherSlot, mlvl);
+        const oldTotal = tOld ? tOld.total : cur;
+        out.byItem[other.uid] = Object.assign(out.byItem[other.uid] || {}, {
+          tough: { value: oldTotal, delta: oldTotal - newTotal, cur: newTotal, detail: tOld },
+        });
+      }
+    }
+    return out;
+  };
+
+  /* 坚韧明细（角色面板悬停「坚韧」时展开）：总坚韧 + 五系分项 + 计算输入 */
+  UI.toughnessHTML = function (t) {
+    if (!t || !t.byType) return '';
+    const pc = (v) => Math.round((v || 0) * 100) + '%';
+    let h = '<div class="tname">坚韧</div>' +
+      '<div class="ttype">满血时能承受的「减伤前」伤害，五系平均</div>' +
+      '<div class="tstat base"><span class="av">坚韧总计</span><b>' + Math.round(t.total) + '</b></div>' +
+      '<div class="tsep"></div><div class="thd">按伤害类型</div>';
+    S.TOUGH_TYPES.forEach((k) => {
+      const mit = k === 'physical' ? t.armorMit : S.resistMitigation((t.res && t.res[k]) || 0);
+      h += '<div class="tstat base"><span class="av">' + S.TOUGH_NAME[k] + '</span>' +
+        '<b>' + Math.round(t.byType[k] || 0) + '</b>' +
+        '<span class="dim small">减伤 ' + pc(mit) + '</span></div>';
+    });
+    h += '<div class="tsep"></div><div class="thd">计算输入</div>' +
+      '<div class="tstat base"><span class="av">生命上限</span><b>' + Math.round(t.life) + '</b></div>' +
+      '<div class="tstat base"><span class="av">护甲</span><b>' + Math.round(t.armor || 0) + '</b>' +
+      '<span class="dim small">减伤 ' + pc(t.armorMit) + '</span></div>' +
+      '<div class="tstat base"><span class="av">闪避</span><b>' + Math.round(t.dodge || 0) + '%</b></div>' +
+      '<div class="tstat base"><span class="av">受到伤害降低</span><b>' + Math.round(t.dmgReduce || 0) + '%</b></div>' +
+      '<div class="tstat dim">按怪物等级 ' + Math.round(t.mlvl || 1) + ' 计算　各层乘法叠加</div>';
+    return h;
   };
 
   /* 该装备对应的「已穿戴」对照物（戒指会返回两个槽位；
@@ -443,6 +529,7 @@
         name = (s ? s.name : slot) + ' · 空';
       }
       d.classList.toggle('empty', !it);
+      d.title = it ? name : (name + '　（点击可装备/卸下）');
       d.innerHTML = '<span class="g">' + (s ? s.glyph : '▪') + '</span>' +
         '<span class="nm"' + (color ? ' style="color:' + color + '"' : '') + '>' + name + '</span>' +
         UI.socketsHTML(it);
@@ -459,6 +546,7 @@
       ['生命', Math.round(p.life) + ' / ' + st.maxLife],
       ['法力', Math.round(p.mana) + ' / ' + st.maxMana],
       ['护甲', st.armor],
+      ['坚韧', Math.round(S.toughness(p, UI.game.mlvl || 1).total)],
       ['伤害', Math.round(st.weaponMin) + '-' + Math.round(st.weaponMax) + ' × ' + st.attackSpeed.toFixed(2)],
       ['每秒伤害', Math.round(st.weaponDps * 100) / 100],
       ['暴击', st.crit.toFixed(1) + '% / ' + Math.round(st.critDmg) + '%'],
@@ -590,34 +678,264 @@
     return h;
   };
 
-  // 双手武器最多 8 孔：上面 4 颗、下面 4 颗，其余装备仍是单排
-  UI.SOCKETS_PER_ROW = 4;
-  UI.socketsSplit = (it) => !!(it && L.isTwoHand(it) && it.sockets > UI.SOCKETS_PER_ROW);
+  // 孔位上限最多 4（双手武器），一排就够显示
   UI.socketsHTML = function (it) {
     if (!it || !(it.sockets > 0)) return '';
     const filled = (it.gems || []).filter(Boolean).length;
     const tip = '孔位 ' + filled + ' / ' + it.sockets;
-    if (UI.socketsSplit(it)) {
-      const n = UI.SOCKETS_PER_ROW;
-      return '<span class="sockets top" title="' + tip + '">' + UI.socketsInner(it, 0, n) + '</span>' +
-        '<span class="sockets bottom" title="' + tip + '">' + UI.socketsInner(it, n, it.sockets) + '</span>';
+    return '<span class="sockets" title="' + tip + '">' + UI.socketsInner(it) + '</span>';
+  };
+
+  /* ---------------- 装备过滤器接入 ----------------
+   * 隐藏的物品仍然占格、仍然能点，只是画成很淡的样子；
+   * 高亮的物品描一圈颜色，方便一眼挑出来。 */
+  UI.filterReveal = false;      // 「临时显示被隐藏的物品」开关
+  UI.filterStateOf = function (it) {
+    if (!it || it.cat !== 'equip' || !G.Filter) return { state: 'normal', index: -1 };
+    const p = UI.game && UI.game.player;
+    const ctx = {
+      stats: p ? p.stats : null,
+      canEquip: !UI.canEquip(it),
+    };
+    return G.Filter.decide(it, ctx);
+  };
+
+  /* ============================================================
+   *  装备过滤器面板
+   * ============================================================ */
+  UI.bindFilter = function () {
+    const btn = el('btn-filter');
+    if (btn) btn.addEventListener('click', () => UI.togglePanel('panel-filter', true));
+    const en = el('filter-enabled');
+    if (en) en.addEventListener('change', () => {
+      G.Filter.data.enabled = !!en.checked;
+      G.Filter.save();
+      UI.refreshFilterViews();
+      UI.renderFilter();
+    });
+    const add = el('btn-filter-add');
+    if (add) add.addEventListener('click', () => {
+      if (!G.Filter.addRule()) {
+        UI.filterMsg('最多只能有 ' + G.Filter.MAX_RULES + ' 条规则。', true);
+        return;
+      }
+      G.Filter.save();
+      UI.refreshFilterViews();
+      UI.renderFilter();
+    });
+    const clr = el('btn-filter-clear');
+    if (clr) clr.addEventListener('click', () => {
+      G.Filter.clear();
+      G.Filter.save();
+      UI.refreshFilterViews();
+      UI.renderFilter();
+      UI.filterMsg('已清空全部规则。');
+    });
+    const rev = el('btn-filter-reveal');
+    if (rev) rev.addEventListener('click', () => {
+      UI.filterReveal = !UI.filterReveal;
+      rev.textContent = UI.filterReveal ? '恢复隐藏的物品' : '临时显示被隐藏的物品';
+      UI.refreshFilterViews();
+    });
+    const exp = el('btn-filter-export');
+    if (exp) exp.addEventListener('click', () => {
+      const ta = el('filter-json');
+      if (ta) ta.value = G.Filter.exportText();
+      UI.filterMsg('已导出到文本框，复制走即可备份。');
+    });
+    const imp = el('btn-filter-import');
+    if (imp) imp.addEventListener('click', () => {
+      const ta = el('filter-json');
+      const r = G.Filter.importText(ta ? ta.value : '');
+      if (!r.ok) { UI.filterMsg('导入失败：' + r.why, true); return; }
+      UI.refreshFilterViews();
+      UI.renderFilter();
+      UI.filterMsg('导入成功，共 ' + r.rules + ' 条规则。');
+    });
+    const cp = el('btn-filter-copy');
+    if (cp) cp.addEventListener('click', () => {
+      const ta = el('filter-json');
+      const txt = ta && ta.value ? ta.value : G.Filter.exportText();
+      if (ta) ta.value = txt;
+      try {
+        if (root.navigator && root.navigator.clipboard) root.navigator.clipboard.writeText(txt);
+        UI.filterMsg('已复制到剪贴板。');
+      } catch (e) { UI.filterMsg('请手动复制文本框里的内容。', true); }
+    });
+    // 细则里的输入控件：事件委托，避免每次重建都重新绑定
+    const rules = el('filter-rules');
+    if (rules) {
+      rules.addEventListener('change', (ev) => UI.filterEdit(ev));
+      rules.addEventListener('click', (ev) => UI.filterClick(ev));
+      rules.addEventListener('input', (ev) => UI.filterEdit(ev, true));
     }
-    const inner = UI.socketsInner(it);
-    return '<span class="sockets" title="' + tip + '">' + inner + '</span>';
+  };
+
+  UI.filterMsg = function (txt, bad) {
+    const m = el('filter-msg');
+    if (m) {
+      m.textContent = txt || '';
+      m.style.color = bad ? '#ff8f8f' : '#8ce07a';
+    }
+  };
+
+  // 面板里任何控件改动都会带 data-rule / data-cond 等标记，统一在这里落到数据上
+  UI.filterEdit = function (ev, live) {
+    const t = ev && ev.target;
+    if (!t || !t.dataset) return;
+    const ri = t.dataset.rule | 0;
+    const ci = t.dataset.cond == null ? -1 : (t.dataset.cond | 0);
+    const rule = G.Filter.data.rules[ri];
+    if (!rule) return;
+    if (ci < 0) {
+      if (t.dataset.field === 'action') rule.action = t.value;
+      else if (t.dataset.field === 'enabled') rule.enabled = !!t.checked;
+    } else {
+      const cond = rule.conds[ci];
+      if (!cond) return;
+      if (t.dataset.field === 'type') {
+        cond.type = t.value;
+        const nt = G.Filter.condType(cond.type);
+        cond.op = nt.ops[0].id;
+        cond.value = nt.value === 'number' ? 20 : nt.value === 'rarity' ? 'rare' : nt.value === 'slot' ? 'weapon'
+          : nt.value === 'bool' ? 'true' : '';
+      } else if (t.dataset.field === 'op') cond.op = t.value;
+      else if (t.dataset.field === 'value') {
+        cond.value = G.Filter.condType(cond.type).value === 'number' && !live ? Number(t.value) : t.value;
+        if (live) return;                       // 输入过程中不重绘，避免打断打字
+      }
+    }
+    G.Filter.save();
+    UI.refreshFilterViews();
+    UI.renderFilter();
+  };
+
+  UI.filterClick = function (ev) {
+    const t = ev && ev.target;
+    if (!t || !t.dataset) return;
+    const ri = t.dataset.rule | 0;
+    const ci = t.dataset.cond == null ? -1 : (t.dataset.cond | 0);
+    const act = t.dataset.act;
+    if (!act) return;
+    if (act === 'del') G.Filter.removeRule(ri);
+    else if (act === 'up') G.Filter.moveRule(ri, -1);
+    else if (act === 'down') G.Filter.moveRule(ri, 1);
+    else if (act === 'addCond') {
+      const rule = G.Filter.data.rules[ri];
+      if (rule) rule.conds.push({ type: 'ilvl', op: '>=', value: 20 });
+    } else if (act === 'delCond') {
+      const rule = G.Filter.data.rules[ri];
+      if (rule) {
+        rule.conds.splice(ci, 1);
+        if (!rule.conds.length) rule.conds.push({ type: 'rarity', op: 'is', value: 'common' });
+      }
+    } else return;
+    G.Filter.save();
+    UI.refreshFilterViews();
+    UI.renderFilter();
+  };
+
+  UI.renderFilter = function () {
+    const F = G.Filter;
+    if (!F) return;
+    const en = el('filter-enabled');
+    if (en) en.checked = !!F.data.enabled;
+    G.text('filter-count', F.data.rules.length + ' / ' + F.MAX_RULES + ' 条规则');
+    const box = el('filter-rules');
+    if (box) {
+      box.innerHTML = '';
+      if (!F.data.rules.length) {
+        const d = root.document.createElement('div');
+        d.className = 'hint dim';
+        d.textContent = '还没有规则。点下面的「新增规则」开始，例如：稀有度不是 稀有 → 隐藏。';
+        box.appendChild(d);
+      }
+      F.data.rules.forEach((rule, ri) => {
+        const card = root.document.createElement('div');
+        card.className = 'frule' + (rule.action === 'hide' ? ' hide' : rule.action === 'show' ? ' show' : '');
+        card.dataset.rule = ri;
+        let h = '<div class="fr-hd">' +
+          '<span class="fr-idx">' + (ri + 1) + '</span>' +
+          '<label class="flt-toggle"><input type="checkbox" data-rule="' + ri + '" data-field="enabled"' +
+          (rule.enabled === false ? '' : ' checked') + '> 启用</label>' +
+          '<span class="fr-act">动作</span>' +
+          '<select data-rule="' + ri + '" data-field="action">' +
+          F.ACTIONS.map((a) => '<option value="' + a.id + '"' + (a.id === rule.action ? ' selected' : '') + '>' + a.name + '</option>').join('') +
+          '</select>' +
+          '<span class="fr-sum">' + F.ruleText(rule) + '</span>' +
+          '<button class="btn tiny" data-rule="' + ri + '" data-act="up" title="上移（越靠前越优先）">↑</button>' +
+          '<button class="btn tiny" data-rule="' + ri + '" data-act="down" title="下移">↓</button>' +
+          '<button class="btn tiny danger" data-rule="' + ri + '" data-act="del">删除</button>' +
+          '</div>';
+        h += '<div class="fr-conds">';
+        (rule.conds || []).forEach((cond, ci) => {
+          const t = F.condType(cond.type);
+          h += '<div class="fcond">' +
+            '<select data-rule="' + ri + '" data-cond="' + ci + '" data-field="type">' +
+            F.COND_TYPES.map((x) => '<option value="' + x.id + '"' + (x.id === cond.type ? ' selected' : '') + '>' + x.name + '</option>').join('') +
+            '</select>' +
+            '<select data-rule="' + ri + '" data-cond="' + ci + '" data-field="op">' +
+            t.ops.map((o) => '<option value="' + o.id + '"' + (o.id === cond.op ? ' selected' : '') + '>' + o.name + '</option>').join('') +
+            '</select>' +
+            UI.filterValueInput(ri, ci, cond, t) +
+            '<button class="btn tiny danger" data-rule="' + ri + '" data-cond="' + ci + '" data-act="delCond">✕</button>' +
+            '</div>';
+        });
+        h += '<button class="btn tiny" data-rule="' + ri + '" data-act="addCond">+ 添加细则</button></div>';
+        card.innerHTML = h;
+        box.appendChild(card);
+      });
+    }
+    const hint = el('filter-hint');
+    if (hint) {
+      hint.innerHTML = '说明：装备一旦命中某条规则就按该规则处理，<b>不再看后面的规则</b>，所以「想把某类留下」的规则要放在前面。' +
+        '隐藏的物品仍然占着格子、也仍然能点，想临时看它们就按上面的按钮。过滤器对所有存档通用。';
+    }
+  };
+
+  UI.filterValueInput = function (ri, ci, cond, t) {
+    const attr = 'data-rule="' + ri + '" data-cond="' + ci + '" data-field="value"';
+    const v = cond.value == null ? '' : cond.value;
+    if (t.value === 'rarity') {
+      return '<select ' + attr + '>' + G.Filter.rarities.map((r) =>
+        '<option value="' + r.id + '"' + (r.id === v ? ' selected' : '') + '>' + r.name + '</option>').join('') + '</select>';
+    }
+    if (t.value === 'slot') {
+      return '<select ' + attr + '>' + G.Filter.slots.map((r) =>
+        '<option value="' + r.id + '"' + (r.id === v ? ' selected' : '') + '>' + r.name + '</option>').join('') + '</select>';
+    }
+    if (t.value === 'type') {
+      return '<select ' + attr + '>' + Object.keys(D.WEAPON_TYPES).concat(Object.keys(D.ARMOR_TYPES)).map((k) => {
+        const label = (D.WEAPON_TYPES[k] || D.ARMOR_TYPES[k] || {}).label || k;
+        return '<option value="' + k + '"' + (k === v ? ' selected' : '') + '>' + label + '</option>';
+      }).join('') + '</select>';
+    }
+    if (t.value === 'bool') {
+      return '<select ' + attr + '><option value="true"' + (v === true || v === 'true' ? ' selected' : '') + '>是</option>' +
+        '<option value="false"' + (v === false || v === 'false' ? ' selected' : '') + '>否</option></select>';
+    }
+    if (t.value === 'number') return '<input type="number" class="flt-num" ' + attr + ' value="' + v + '">';
+    return '<input type="text" class="flt-txt" ' + attr + ' value="' + String(v) + '" placeholder="例如：暴击 / 生命 / 抗性">';
   };
 
   /* 背包 / 仓库格子的统一内容（图标 + 孔位菱形 + 数量 + 提升标识） */
   UI.cellInner = function (it) {
     if (!it) return '';
+    const fs = UI.filterStateOf(it);
+    if (fs.state === 'hide' && !UI.filterReveal) {
+      return '<span class="flt-hidden" title="已被过滤器隐藏（规则 ' + (fs.index + 1) + '：' +
+        G.Filter.ruleText(G.Filter.data.rules[fs.index]) + '）">✕</span>';
+    }
     let html = '<span style="color:' + UI.itemColor(it) + '">' + itemGlyph(it) + '</span>';
     html += UI.socketsHTML(it);
     if (it.cat === 'potion') html += '<span class="cnt">' + (D.POTIONS[it.potion].vals[it.tier]) + '</span>';
     if ((it.cat === 'orb' || it.cat === 'gem') && (it.count || 1) > 1) html += '<span class="cnt">' + it.count + '</span>';
     if (it.cat === 'equip' && UI.isUpgrade(it)) html += '<span class="up-mark" title="装备后评分提升">▲</span>';
+    if (fs.state === 'show') html += '<span class="flt-mark" title="过滤器高亮（规则 ' + (fs.index + 1) + '）">◆</span>';
     return html;
   };
 
-  /* 格子 CSS 类：稀有度 + 通货/宝石 + 无法穿戴的红色边框 */
+  /* 格子 CSS 类：稀有度 + 通货/宝石 + 无法穿戴的红色边框 + 过滤器状态 */
   UI.cellClass = function (it) {
     if (!it) return 'cell empty';
     let c = 'cell r-' + it.rarity;
@@ -625,7 +943,17 @@
     else if (it.cat === 'gem') c += ' gem-cat gem-t' + (it.tier | 0);
     if (UI.cantEquip(it)) c += ' cant-equip';
     else if (it.cat === 'equip' && UI.isUpgrade(it)) c += ' upgrade';
+    const fs = UI.filterStateOf(it);
+    if (fs.state === 'hide' && !UI.filterReveal) c += ' flt-hide';
+    else if (fs.state === 'show') c += ' flt-show';
     return c;
+  };
+
+  UI.refreshFilterViews = function () {
+    UI.dirty.inv = true;
+    UI.refreshInventory();
+    UI.renderStash();
+    if (UI.open === 'panel-vendor') { UI.dirty.vendor = true; UI.renderVendor(); }
   };
 
   UI.refreshInventory = function () {
@@ -736,7 +1064,7 @@
         entries.push({ label: '装备', action: () => UI.equipFromInv(i) });
       }
       if (it.sockets) entries.push({ label: '镶嵌宝石（第一个孔位）', action: () => UI.insertGemInto(it) });
-      entries.push({ label: '在工坊中改造 [G]', action: () => { UI.craftUid = it.uid; UI.togglePanel('panel-craft', true); } });
+      entries.push({ label: '在工坊中改造 [' + G.Settings.actionLabel('craft', 'G') + ']', action: () => { UI.craftUid = it.uid; UI.togglePanel('panel-craft', true); } });
       entries.push({ label: '出售（' + L.price(it) + ' 金币）', action: () => UI.sellInv(i) });
     } else if (it.cat === 'gem') {
       entries.push({ label: '拿起宝石（点击有孔装备镶嵌）', action: () => UI.pickUpGem(i) });
@@ -745,7 +1073,7 @@
       if ((it.count || 1) > 1) entries.push({ label: '出售 1 颗（' + Math.round(L.price(it) / it.count) + ' 金币）', action: () => UI.sellOne(i) });
       entries.push({ label: '全部出售（' + L.price(it) + ' 金币）', action: () => UI.sellInv(i) });
     } else if (it.cat === 'orb') {
-      entries.push({ label: '在工坊中使用 [G]', action: () => { UI.togglePanel('panel-craft', true); } });
+      entries.push({ label: '在工坊中使用 [' + G.Settings.actionLabel('craft', 'G') + ']', action: () => { UI.togglePanel('panel-craft', true); } });
       entries.push({ label: '存入共享仓库', action: () => UI.depositToShared(i) });
       if ((it.count || 1) > 1) entries.push({ label: '出售 1 个（' + L.orbUnitPrice(it.orb) + ' 金币）', action: () => UI.sellOne(i) });
       entries.push({ label: '全部出售（' + L.price(it) + ' 金币）', action: () => UI.sellInv(i) });
@@ -1033,11 +1361,9 @@
     const basicId = p.cls + '_basic';
     const actives = D.activeSkills(p.cls);
     const defs = [basicId].concat(actives);
-    /* 技能栏按键提示随操作模式变化：
-     * 鼠标模式：普攻=右键，技能=1/2/3/4
-     * WASD 模式：普攻=左键，技能=右键/1/2/3 */
-    const wasd = G.Settings.mode() === 'wasd';
-    const keys = wasd ? ['左键', '右键', '1', '2', '3'] : ['右键', '1', '2', '3', '4'];
+    /* 技能栏按键提示直接读当前绑定（改键 / 换操作模式后自动跟着变） */
+    const keyOf = (act) => G.Settings.actionLabel(act);
+    const keys = [keyOf('attack'), keyOf('skill1'), keyOf('skill2'), keyOf('skill3'), keyOf('skill4')];
     defs.forEach((id, i) => {
       const sk = D.SKILLS[id];
       const slot = root.document.createElement('div');
@@ -1063,11 +1389,90 @@
       const b = root.document.createElement('button');
       b.className = 'ubtn';
       b.id = 'ubtn-mana';
-      b.innerHTML = '<span class="ico">🔷</span><span class="k">E</span><span class="cnt" id="mana-count">0</span>';
-      b.title = '喝法力药水 [E]';
+      b.dataset.act = 'potionMana';
+      b.dataset.label = '法力药水';
+      b.innerHTML = '<span class="ico">🔷</span><span class="k"></span><span class="cnt" id="mana-count">0</span>';
       b.addEventListener('click', () => UI.game.usePotion('mana'));
       util.insertBefore(b, util.firstChild);
     }
+    UI.refreshKeyHints();
+  };
+
+  /* ============================================================
+   *  界面上的按键提示
+   *  ------------------------------------------------------------
+   *  所有「按 X 做某事」的提示都从当前绑定读出来，改键 / 换操作模式后
+   *  调用一次 UI.refreshKeyHints() 就会全部更新。
+   * ============================================================ */
+  UI.KEY_HINTS = [
+    ['potion', 'potionLife', '喝生命药水'],
+    ['potionMana', 'potionMana', '喝法力药水'],
+    ['inventory', 'inventory', '背包'],
+    ['character', 'character', '角色'],
+    ['vendor', 'vendor', '商人'],
+    ['craft', 'craft', '做装工坊'],
+    ['stash', 'stash', '仓库'],
+    ['town', 'town', '城镇建设'],
+    ['settings', 'settings', '设置'],
+    ['help', 'help', '帮助'],
+    ['map', 'map', '大地图'],
+    ['recall', 'recall', '往返城镇 / 深渊'],
+  ];
+  UI.refreshKeyHints = function () {
+    /* 1) 右下角功能按钮上的键位角标与悬浮提示 */
+    const util = el('utilitybar');
+    if (util) {
+      Array.prototype.forEach.call(util.children, (btn) => {
+        const act = btn.dataset ? btn.dataset.act : null;
+        if (!act) return;
+        const def = UI.KEY_HINTS.filter((h) => h[0] === act)[0];
+        const label = (btn.dataset && btn.dataset.label) || (def ? def[2] : act);
+        const key = G.Settings.actionLabel(act);
+        const k = btn.querySelector ? btn.querySelector('.k') : null;
+        if (k) k.textContent = key === '未绑定' ? '—' : key;
+        btn.title = label + ' [' + key + ']（可在设置里改键）';
+      });
+    }
+    /* 2) HTML 里带 data-key 的静态提示：<b data-key="craft"></b> */
+    if (root.document && root.document.querySelectorAll) {
+      Array.prototype.forEach.call(root.document.querySelectorAll('[data-key]'), (n) => {
+        const act = n.getAttribute('data-key');
+        if (!act || act === 'fixed') return;
+        n.textContent = G.Settings.actionLabel(act);
+      });
+    }
+    /* 3) 操作模式说明里的按键 */
+    const md = el('mode-desc');
+    if (md) {
+      const mode = G.Settings.MODES.filter((m) => m.id === G.Settings.mode())[0];
+      if (mode) md.textContent = UI.modeDesc(mode.id);
+    }
+    /* 4) 帮助面板里的操作模式两行 */
+    const hm = el('help-mode-mouse'), hw = el('help-mode-wasd');
+    if (hm) hm.innerHTML = '<b>鼠标模式</b>：鼠标左键移动（按住可持续走位）· ' + G.Settings.actionLabel('attack') +
+      ' 普攻 · <b>' + G.Settings.actionLabel('skill1') + ' ' + G.Settings.actionLabel('skill2') + ' ' +
+      G.Settings.actionLabel('skill3') + ' ' + G.Settings.actionLabel('skill4') + '</b> 释放技能';
+    if (hw) hw.innerHTML = '<b>WASD 模式</b>：<b>' + G.Settings.actionLabel('moveUp') + ' ' + G.Settings.actionLabel('moveLeft') +
+      ' ' + G.Settings.actionLabel('moveDown') + ' ' + G.Settings.actionLabel('moveRight') + '</b> 移动 · ' +
+      G.Settings.actionLabel('attack') + ' 普攻（不移动）· ' + G.Settings.actionLabel('skill1') + ' 技能1 · <b>' +
+      G.Settings.actionLabel('skill2') + ' ' + G.Settings.actionLabel('skill3') + ' ' + G.Settings.actionLabel('skill4') +
+      '</b> 释放技能 2/3/4';
+    /* 5) 其它按钮上的 [键] */
+    const bsTown = el('btn-bs-town');
+    if (bsTown) bsTown.textContent = '城镇建设 [' + G.Settings.actionLabel('town') + ']';
+  };
+
+  /* 操作模式说明（按键名动态取当前绑定） */
+  UI.modeDesc = function (modeId) {
+    const k = (a) => G.Settings.actionLabel(a, '未绑定');
+    if (modeId === 'wasd') {
+      return k('moveUp') + ' ' + k('moveLeft') + ' ' + k('moveDown') + ' ' + k('moveRight') +
+        ' 移动，' + k('attack') + ' 普通攻击（不会自动移动），' + k('skill1') + ' 释放技能 1，' +
+        k('skill2') + ' / ' + k('skill3') + ' / ' + k('skill4') + ' 释放技能 2 / 3 / 4。';
+    }
+    // 鼠标模式：移动固定是左键（不可改），其余读绑定
+    return '鼠标左键移动（按住可持续走位），' + k('attack') + ' 普通攻击，' +
+      k('skill1') + ' / ' + k('skill2') + ' / ' + k('skill3') + ' / ' + k('skill4') + ' 释放四个主动技能。';
   };
 
   UI.skillTooltip = function (id, ev) {
@@ -1130,6 +1535,7 @@
     const der = el('derived-list');
     if (der) {
       const st = p.stats;
+      const tough = S.toughness(p, game_mlvl());
       const rows = [
         ['职业', cls.name + ' · ' + cls.title],
         ['等级', p.level + '（' + Math.floor(p.xp) + ' / ' + S.xpToNext(p.level) + '）'],
@@ -1137,6 +1543,7 @@
         ['法力上限', st.maxMana + '（回复 ' + st.manaRegen.toFixed(1) + '/秒）'],
         ['护甲', st.armor + '（减伤 ' + Math.round(S.armorMitigation(st.armor, game_mlvl()) * 100) + '%）'],
         ['抗性', '火 ' + Math.round(st.res.fire) + ' / 冰 ' + Math.round(st.res.cold) + ' / 电 ' + Math.round(st.res.lightning) + ' / 毒 ' + Math.round(st.res.poison)],
+        ['<span class="tough">坚韧</span>', Math.round(tough.total) + ' <span class="dim small">（悬停看分项）</span>'],
         ['武器伤害', Math.round(st.weaponMin) + '-' + Math.round(st.weaponMax)],
         ['攻击速度', st.attackSpeed.toFixed(2) + ' 次/秒'],
         ['每秒伤害', Math.round(st.weaponDps)],
@@ -1155,6 +1562,15 @@
         ['所有技能', '+' + st.allSkills],
       ];
       der.innerHTML = rows.map((r) => '<div class="row"><span>' + r[0] + '</span><b>' + r[1] + '</b></div>').join('');
+      // 悬停「坚韧」→ 展开各类伤害的坚韧明细
+      const toughEl = der.querySelector ? der.querySelector('.tough') : null;
+      if (toughEl) {
+        const html = UI.toughnessHTML(tough);
+        toughEl.style.cursor = 'help';
+        toughEl.addEventListener('mouseenter', (ev) => UI.showTooltip(html, ev));
+        toughEl.addEventListener('mousemove', (ev) => UI.showTooltip(html, ev));
+        toughEl.addEventListener('mouseleave', UI.hideTooltip);
+      }
     }
     function game_mlvl() { return UI.game.mlvl || 1; }
 
@@ -1325,8 +1741,45 @@
     return true;
   };
 
-  UI.renderSkillWindow = function () {
-    if (!UI.ready()) return;
+  /* 技能窗口里的「升级收益」：把角色面板提示框里那套数字直接搬进窗口 */
+  UI.skillGainHTML = function (p, sk, eff, own) {
+    if (own >= sk.maxLevel) {
+      return '<div class="skgain maxed">已满级（' + sk.maxLevel + ' 点）' +
+        (eff > sk.maxLevel ? '　装备加成后 ' + eff + ' 级（26 级起每级递减）' : '') + '</div>';
+    }
+    if (p.level < (sk.reqLevel || 0)) {
+      return '<div class="skgain bad">需要角色等级 ' + sk.reqLevel + ' 才能学习</div>';
+    }
+    const next = eff + 1;
+    const parts = [];
+    if (sk.base != null && sk.base > 0) {
+      const cur = eff > 0 ? UI.skillDamageAt(p, sk, eff) : 0;
+      const nx = UI.skillDamageAt(p, sk, next);
+      const d = nx - cur;
+      if (eff > 0) {
+        const pct = cur > 0 ? '（+' + (d / cur * 100).toFixed(1) + '%）' : '';
+        parts.push('基础伤害 ' + Math.round(cur) + ' → <b>' + Math.round(nx) + '</b>' +
+          '　<span class="dim">+' + Math.round(d) + pct + '</span>');
+        parts.push('伤害倍率 ' + Math.round(UI.skillMultAt(sk, eff)) + '% → <b>' + Math.round(UI.skillMultAt(sk, next)) + '%</b>');
+      } else {
+        parts.push('<b class="good">解锁该技能</b>　基础伤害 ' + Math.round(nx));
+      }
+    }
+    if (sk.type === 'buff' && sk.buff) {
+      const b = sk.buff;
+      const l0 = D.skillScaleLevel(Math.max(1, eff)), l1 = D.skillScaleLevel(Math.max(1, next));
+      const d0 = (b.dmg || 0) + (b.perDmg || 0) * (l0 - 1), d1 = (b.dmg || 0) + (b.perDmg || 0) * (l1 - 1);
+      const a0 = (b.armor || 0) + (b.perArmor || 0) * (l0 - 1), a1 = (b.armor || 0) + (b.perArmor || 0) * (l1 - 1);
+      parts.push('增益伤害 +' + d0.toFixed(0) + '% → <b>+' + d1.toFixed(0) + '%</b>');
+      parts.push('护甲 +' + a0.toFixed(0) + ' → <b>+' + a1.toFixed(0) + '</b>');
+    }
+    if (sk.per) parts.push('<span class="dim">每点成长 +' + sk.per + '% 技能基础值</span>');
+    parts.push('<span class="dim">剩余技能点 ' + p.skillPoints + '</span>');
+    return '<div class="skgain"><span class="hd">投入下一点（' + own + ' → ' + (own + 1) + '）：</span>' +
+      parts.join('　') + '</div>';
+  };
+
+  UI.renderSkillWindow = function () {    if (!UI.ready()) return;
     const id = UI.skillWin;
     const sk = id ? D.SKILLS[id] : null;
     const tree = el('sk-tree');
@@ -1370,7 +1823,9 @@
       if (sk.cd) rows.push('冷却 ' + (S.skillShape(p, sk).cd || 0).toFixed(1) + 's');
       const mods = S.skillMods(p, id);
       const modTxt = D.modText(mods);
-      statEl.innerHTML = rows.join('　') + (modTxt.length ? '<div class="skmods">当前强化：' + modTxt.join('　') + '</div>' : '<div class="skmods dim">尚未选择任何强化分支</div>');
+      statEl.innerHTML = rows.join('　') +
+        (modTxt.length ? '<div class="skmods">当前强化：' + modTxt.join('　') + '</div>' : '<div class="skmods dim">尚未选择任何强化分支</div>') +
+        UI.skillGainHTML(p, sk, eff, own);
     }
     const addBtn = el('sk-add');
     if (addBtn) {
@@ -1658,12 +2113,13 @@
     G.text('hud-total', g.totalMonsters);
     const obj = el('objective');
     if (obj) {
+      const K = (a) => '<b>' + G.Settings.actionLabel(a, '—') + '</b>';
       if (inTown) {
         const npc = G.Town.nearestNpc(g.map, p.x, p.y, 110);
-        if (npc) obj.innerHTML = '与 <b class="c-rare">' + npc.name + '</b> 交谈：按 <b>F</b>';
-        else if (g.nearGate(110)) obj.innerHTML = '站上 <b class="c-unique">深渊之门</b> 按 <b>F</b> 进入地牢';
-        else obj.innerHTML = '营地内按 <b>B</b> 建设 · <b>G</b> 做装 · <b>K</b> 仓库　南侧是深渊之门';
-      } else if (g.portalOpen) obj.innerHTML = '传送门已开启！前往 <b class="c-rare">紫色漩涡</b> 进入下一层（或按 <b>T</b> 回城）';
+        if (npc) obj.innerHTML = '与 <b class="c-rare">' + npc.name + '</b> 交谈：按 ' + K('pickup');
+        else if (g.nearGate(110)) obj.innerHTML = '站上 <b class="c-unique">深渊之门</b> 按 ' + K('pickup') + ' 进入地牢';
+        else obj.innerHTML = '营地内按 ' + K('town') + ' 建设 · ' + K('craft') + ' 做装 · ' + K('stash') + ' 仓库　南侧是深渊之门';
+      } else if (g.portalOpen) obj.innerHTML = '传送门已开启！前往 <b class="c-rare">紫色漩涡</b> 进入下一层（或按 ' + K('recall') + ' 回城）';
       else if (g.map && g.map.isBoss && g.bossAlive) obj.innerHTML = '击败 <b class="c-boss">BOSS</b> 以开启传送门　<b>' + g.killed + '/' + g.totalMonsters + '</b>';
       else obj.innerHTML = '清除怪物以开启传送门　<b>' + g.killed + '/' + g.totalMonsters + '</b>';
     }
@@ -1702,7 +2158,7 @@
   UI.bindPanels = function () {
     ['panel-inventory', 'panel-character', 'panel-vendor', 'panel-help',
       'panel-craft', 'panel-stash', 'panel-blacksmith', 'panel-town', 'panel-jeweler', 'panel-rift',
-      'panel-respec', 'panel-skill'].forEach((id) => {
+      'panel-respec', 'panel-skill', 'panel-filter'].forEach((id) => {
       const pnl = el(id);
       if (pnl) pnl.hidden = true;
     });
@@ -1753,13 +2209,13 @@
     if (!pnl) return;
     const show = force == null ? pnl.hidden : force;
     if (show && UI.needTown(id)) {
-      G.log('该服务只在【余烬营地】提供（按 T 回城）。', 'c-boss');
+      G.log('该服务只在【余烬营地】提供（按 ' + G.Settings.actionLabel('recall', 'T') + ' 回城）。', 'c-boss');
       G.audio.play('noskill');
       return;
     }
     ['panel-inventory', 'panel-character', 'panel-vendor', 'panel-help',
       'panel-craft', 'panel-stash', 'panel-blacksmith', 'panel-town', 'panel-jeweler', 'panel-rift',
-      'panel-respec', 'panel-skill', 'panel-settings'].forEach((x) => {
+      'panel-respec', 'panel-skill', 'panel-filter', 'panel-settings'].forEach((x) => {
       const n = el(x);
       if (n && x !== id) n.hidden = true;
     });
@@ -1779,6 +2235,7 @@
       if (id === 'panel-rift') { UI.dirty.rift = true; UI.renderRift(); }
       if (id === 'panel-respec') { UI.dirty.rift = true; UI.renderRespec(); }
       if (id === 'panel-skill') { UI.dirty.skill = true; UI.renderSkillWindow(); }
+      if (id === 'panel-filter') { UI.renderFilter(); }
       if (id === 'panel-settings') { UI.renderSettings(); }
       G.audio.play('ui');
     } else if (id === 'panel-settings' && UI._settingsFromMenu) {
@@ -1855,7 +2312,8 @@
       const btn = ev.target.closest ? ev.target.closest('.ubtn') : null;
       if (!btn) return;
       const act = btn.dataset.act;
-      if (act === 'potion') UI.game.usePotion('life');
+      if (act === 'potionLife' || act === 'potion') UI.game.usePotion('life');
+      else if (act === 'potionMana') UI.game.usePotion('mana');
       else if (act === 'inventory') UI.togglePanel('panel-inventory');
       else if (act === 'character') UI.togglePanel('panel-character');
       else if (act === 'vendor') UI.togglePanel('panel-vendor');
@@ -1863,6 +2321,7 @@
       else if (act === 'craft') UI.togglePanel('panel-craft');
       else if (act === 'stash') UI.togglePanel('panel-stash');
       else if (act === 'town') UI.togglePanel('panel-town');
+      else if (act === 'map') UI.toggleBigMap();
       else if (act === 'settings') UI.togglePanel('panel-settings');
     });
   };
@@ -2029,6 +2488,20 @@
   const BENCH = { w: 460, h: 470, cx: 230, cy: 224, rx: 172, ry: 178, node: 46 };
   UI.craftLayout = () => BENCH;
 
+  /* 工作台上通货石的摆放顺序：从正上方开始顺时针一圈（按参考图排定）
+   * 正上 净化石 → 右上 增幅石 → 右 晋升石 → 右下 炼化石 → 下右 点金石
+   * → 下左 裂解石 → 左下 混沌石 → 左 传说石 → 左上 钻孔石
+   * 只影响摆放位置，掉落权重等仍以 D.ORBS 为准。 */
+  UI.BENCH_ORDER = ['purify', 'augment', 'ascend', 'refine', 'whetstone', 'fracture', 'chaos', 'legend', 'drill'];
+
+  /* 按摆放顺序取出通货（缺项时自动补上，保证不会漏掉任何一种） */
+  UI.benchOrbs = function () {
+    const out = [];
+    UI.BENCH_ORDER.forEach((id) => { if (D.orbById[id]) out.push(D.orbById[id]); });
+    D.ORBS.forEach((o) => { if (out.indexOf(o) < 0) out.push(o); });
+    return out;
+  };
+
   UI.craftTarget = function () {
     const p = UI.game.player;
     if (!UI.craftUid) return null;
@@ -2192,6 +2665,8 @@
         const cell = root.document.createElement('div');
         const sl = D.SLOT_BY_ID[s];
         cell.className = 'cg-slot' + (it ? ' has' : '') + (it && UI.craftUid === it.uid ? ' bench-on' : '');
+        cell.dataset.slot = s;                    // 与背包装备栏共用同一套排布
+        cell.title = it ? L.displayName(it) : ((sl ? sl.name : s) + ' · 空');
         cell.innerHTML = '<span class="cg-name">' + (sl ? sl.name : s) + '</span>' +
           (it
             ? '<span class="cg-ico" style="color:' + G.RARITY_COLOR[it.rarity] + '">' + itemGlyph(it) + '</span>' +
@@ -2235,11 +2710,12 @@
       }
       bench.appendChild(center);
 
-      // 环绕的通货石
+      // 环绕的通货石（顺序见 UI.BENCH_ORDER）
       const stock = UI.orbStock();
-      D.ORBS.forEach((o, i) => {
+      const ring = UI.benchOrbs();
+      ring.forEach((o, i) => {
         const s = stock[o.id] || { inv: 0, stash: 0, shared: 0, total: 0 };
-        const ang = -Math.PI / 2 + (i / D.ORBS.length) * Math.PI * 2;
+        const ang = -Math.PI / 2 + (i / ring.length) * Math.PI * 2;
         const x = BENCH.cx + Math.cos(ang) * BENCH.rx;
         const y = BENCH.cy + Math.sin(ang) * BENCH.ry;
         const n = root.document.createElement('div');
@@ -2970,18 +3446,64 @@
   UI.renderRift = function () {
     if (!UI.ready()) return;
     const g = UI.game;
+    const p = g.player;
     const max = g.maxUnlockedFloor();
     UI.riftFloor = G.clamp(UI.riftFloor || 1, 1, max);
     G.text('rift-floor', '第 ' + UI.riftFloor + ' 层');
     const diff = D.diffOf(g.diffIdx);
     const info = el('rift-info');
-    if (info) info.innerHTML = '最深层数记录：<b>' + max + '</b>　当前难度：<b style="color:' + diff.color + '">' + diff.name + '</b>';
+    if (info) {
+      info.innerHTML = '最深层数记录：<b>' + max + '</b>　当前难度：<b style="color:' + diff.color + '">' +
+        diff.name + '</b>　<span class="dim">存档位 ' + (g.slot + 1) + '</span>';
+    }
+
+    /* 难度选择：与层数彻底分开，逐档解锁 */
+    const box = el('rift-diffs');
+    if (box) {
+      box.innerHTML = '';
+      const unlocked = g.maxUnlockedDiff();
+      D.DIFFICULTIES.forEach((d, i) => {
+        const card = root.document.createElement('div');
+        const on = i === g.diffIdx;
+        const can = i <= unlocked;
+        const need = i > 0 ? D.diffUnlock(i) : null;
+        card.className = 'dcard' + (on ? ' on' : '') + (can ? '' : ' locked');
+        card.dataset.diff = i;
+        card.dataset.on = on ? '1' : '0';
+        card.dataset.locked = can ? '0' : '1';
+        card.style.borderColor = on ? d.color : '';
+        const needTxt = !can
+          ? '未解锁：在<b style="color:' + D.diffOf(need.diff).color + '">' + D.diffOf(need.diff).name +
+            '</b> 难度击败第 <b>' + need.floor + '</b> 层的领主'
+          : (on ? '当前难度' : '点击切换');
+        const cleared = (p.diffCleared && p.diffCleared[i]) | 0;
+        card.innerHTML =
+          '<div class="dn" style="color:' + d.color + '">' + d.name + '<span class="dr">' + d.roman + '</span></div>' +
+          '<div class="dd">怪物生命 ×' + d.hp + '　伤害 ×' + d.dmg + '<br>掉落率 ×' + d.drop + '　掉落品质 +' + d.quality + '</div>' +
+          '<div class="dl' + (can ? '' : ' bad') + '">' + needTxt +
+          (cleared ? '<br><span class="dim">本难度已清到第 ' + cleared + ' 层</span>' : '') + '</div>';
+        if (can && !on) {
+          card.addEventListener('click', () => {
+            const r = g.setDiff(i);
+            if (!r.ok) { G.log('该难度尚未解锁。', 'c-boss'); G.audio.play('noskill'); return; }
+            G.log('难度切换为【' + d.name + '】：怪物生命 ×' + d.hp + '、伤害 ×' + d.dmg + '，掉落率 ×' + d.drop + '、掉落品质 +' + d.quality + '。', 'c-rare');
+            G.audio.play('ui');
+            UI.renderRift();
+            UI.updateHUD();
+            if (g.save) g.save();
+          });
+        }
+        box.appendChild(card);
+      });
+    }
+
     const dEl = el('rift-diff');
     if (dEl) {
       const mlvl = G.mlvlOf(UI.riftFloor, g.diffIdx);
       const boss = UI.riftFloor % 5 === 0;
-      dEl.innerHTML = '怪物等级约 <b>' + mlvl + '</b>' + (boss ? '　·　<b class="c-boss">BOSS 层</b>' : '') +
-        '<br>每 5 层击败深渊领主可提升难度（怪物更强，掉落更好）。';
+      dEl.innerHTML = '怪物等级约 <b>' + mlvl + '</b>　掉落品质 <b>+' + diff.quality + '</b>' +
+        (boss ? '　·　<b class="c-boss">BOSS 层</b>' : '') +
+        '<br><span class="dim">层数决定怪物等级；难度在其之上加成生命 / 伤害 / 掉落。</span>';
     }
     UI.dirty.rift = false;
   };
@@ -3237,7 +3759,7 @@
         card.className = 'mode-card';
         card.dataset.mode = m.id;
         card.innerHTML = '<div class="mg">' + m.glyph + '</div><div class="mn">' + m.name + '</div>' +
-          '<div class="md">' + m.desc + '</div>';
+          '<div class="md">' + UI.modeDesc(m.id) + '</div>';
         card.addEventListener('click', () => UI.setMode(m.id));
         box.appendChild(card);
       });
@@ -3248,6 +3770,7 @@
       G.log('按键绑定已恢复默认。', 'c-rare');
       UI.renderSettings();
       UI.buildSkillbar();
+      UI.refreshKeyHints();
       G.audio.play('ui');
     });
     const snd = el('btn-sound');
@@ -3280,6 +3803,7 @@
       }
       UI.renderSettings();
       UI.buildSkillbar();
+      UI.refreshKeyHints();
       G.audio.play('ui');
     };
     root.document.addEventListener('keydown', (ev) => {
@@ -3306,8 +3830,9 @@
     UI.buildSkillbar();
     UI.updateSkillbar();
     UI.renderSettings();
+    UI.refreshKeyHints();
     const def = G.Settings.modeDef(id);
-    G.log('操作模式切换为【' + def.name + '】。' + def.desc, 'c-rare');
+    G.log('操作模式切换为【' + def.name + '】。' + UI.modeDesc(id), 'c-rare');
   };
 
   UI.renderSettings = function () {

@@ -1,46 +1,10 @@
 # 暗影深渊 · Shadow Abyss
 
-**当前版本 v0.1.0**　·　变更记录见 [`CHANGELOG.md`](CHANGELOG.md)　·　仓库 <https://github.com/Lightcx/AbyssRPG>
-
-一个用原生 JavaScript + Canvas 写的**类《暗黑破坏神》刷宝 ARPG**，无需任何依赖、无需构建、无需 package.json，双击 `index.html` 即可玩。
-
-```
-AbyssRPG\
-├── index.html          入口（唯一 HTML，全部 UI 结构）
-├── styles.css          暗黑风界面样式（红蓝球 / 技能栏 / 面板 / 提示框 / 技能树 / 做装工作台 / 过滤器）
-├── CHANGELOG.md        版本变更记录（每个版本改了什么）
-├── Todo.txt            待办清单（做完一条删一条）
-├── js/                 13 个 classic script，按下面顺序加载，全部挂在全局 G 上
-│   ├── core.js         命名空间 G、可复现随机数、数学、输入、设置（操作模式/按键绑定）、WebAudio 音效、多存档位存档
-│   ├── data.js         全部游戏数据：属性 / 装备基底 / 词缀 / 暗金 / 宝石 / 怪物 / 精英词缀 /
-│   │                   BOSS / 技能与强化分支 / 职业 / 难度 / 做装通货 / 城镇建筑 / 洗点费用
-│   ├── loot.js         物品生成、词缀掷取与档位、掉落表、命名、估价、评分、做装（通货石）、分解、物品提示 HTML
-│   ├── stats.js        属性聚合（等级 + 装备 + 宝石 + 被动 + 城镇建筑 + Buff）、派生数值、技能等级与分支修饰符
-│   ├── dungeon.js      程序化地牢：网格化房间 + 相邻走廊、出生点/传送门、刷怪点、火把与装饰、碰撞与视线
-│   ├── town.js         城镇「余烬营地」：地图生成、NPC、建筑加成、深渊向导对白
-│   ├── combat.js       伤害结算、状态效果（减速/眩晕/易伤/持续伤害）、技能释放、暗金特效、BOSS 技能
-│   ├── entities.js     玩家、怪物 AI、投射物、地面效果、掉落物、可破坏物、粒子与特效
-│   ├── render.js       2.5D 地牢与城镇渲染、动态光照、实体绘制、建筑与 NPC、伤害数字、小地图
-│   ├── filter.js       装备过滤器：规则模型、细则匹配、导入导出
-│   ├── ui.js           HUD、背包、装备对比、角色面板、技能强化窗口、商店、做装工作台、仓库、铁匠铺、
-│   │                   城镇建设、深渊之门 / 深渊向导、过滤器面板、设置与改键、存档位、日志
-│   ├── game.js         主控：城镇/地牢切换、楼层推进、难度解锁、当前层缓存、刷怪、拾取、死亡、存档
-│   └── main.js         启动引导与主循环
-└── tools/              仅 Node 用的开发工具（不参与游戏运行）
-    ├── smoke-shim.js   无头环境垫片（模拟 DOM / Canvas，供 Node 测试复用）
-    ├── smoke.js        冒烟测试：约 950 项断言，覆盖生成/战斗/BOSS/存档/城镇/做装/技能分支/洗点/
-    │                   难度分离/掉落曲线/层缓存/过滤器/装备对比/UI 引用一致性/编码/渲染 NaN 防护
-    └── balance.js      数值平衡探针：模拟“等级≈怪物等级 + 随机装备”的玩家，输出击杀时间曲线
-```
-
-**技术栈**：HTML + CSS + 原生 ES5 风格 JavaScript（classic script，无模块打包、无框架、无依赖）、Canvas 2D、WebAudio、localStorage。没有构建步骤，也没有 npm 依赖——`tools/` 里的三个脚本只在需要时用 `node` 直接跑。
+**当前版本 v0.2.0**　·　
 
 ## 怎么玩
 
 直接打开 `index.html`（Chrome / Edge / Firefox 均可）。
-
-> 如果浏览器禁止 `file://` 使用 localStorage 导致无法存档，可在目录里跑一个静态服务器：
-> `npx serve .` 或 `python -m http.server`，然后访问对应地址。
 
 ### 操作
 

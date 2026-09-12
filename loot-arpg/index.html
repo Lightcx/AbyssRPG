@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>暗影深渊 · Shadow Abyss</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+
+  <!-- ============ HUD ============ -->
+  <div id="hud">
+    <div id="topbar">
+      <div class="tb-left">
+        <span id="hud-difficulty" class="tag">普通</span>
+        <span id="hud-floor">深渊 第 1 层</span>
+      </div>
+      <div class="tb-mid">
+        <div id="objective">清除怪物以开启传送门 <b><span id="hud-killed">0</span>/<span id="hud-total">0</span></b></div>
+        <div id="xpwrap"><div id="xpfill"></div><span id="xptext">Lv.1</span></div>
+      </div>
+      <div class="tb-right">
+        <span id="hud-mlvl" class="tag dim">怪物等级 1</span>
+        <span><i class="coin"></i><span id="gold-val">0</span></span>
+      </div>
+    </div>
+
+    <div id="minimap-wrap">
+      <canvas id="minimap" width="180" height="180"></canvas>
+      <div id="minimap-label">M 地图</div>
+    </div>
+
+    <div id="buffbar"></div>
+
+    <div id="bottom">
+      <div class="orb orb-life" id="orb-life">
+        <div class="orb-fill"></div>
+        <div class="orb-gloss"></div>
+        <div class="orb-text"><span class="v">100</span><span class="sep">/</span><span class="m">100</span></div>
+      </div>
+
+      <div id="centerbar">
+        <div id="skillbar"></div>
+        <div id="utilitybar">
+          <button class="ubtn" data-act="potion" title="喝药水 [Q]"><span class="ico">🧪</span><span class="k">Q</span><span class="cnt" id="potion-count">3</span></button>
+          <button class="ubtn" data-act="inventory" title="背包 [I]">背包<span class="k">I</span></button>
+          <button class="ubtn" data-act="character" title="角色 [C]">角色<span class="k">C</span></button>
+          <button class="ubtn" data-act="vendor" title="商人 [V]">商人<span class="k">V</span></button>
+          <button class="ubtn" data-act="craft" title="做装工坊 [G]（城镇）">工坊<span class="k">G</span></button>
+          <button class="ubtn" data-act="stash" title="仓库 [K]（城镇）">仓库<span class="k">K</span></button>
+          <button class="ubtn" data-act="town" title="城镇建设 [B]（城镇）">城镇<span class="k">B</span></button>
+          <button class="ubtn" data-act="settings" title="设置 [O]">设置<span class="k">O</span></button>
+          <button class="ubtn" data-act="help" title="帮助 [H]">帮助<span class="k">H</span></button>
+        </div>
+      </div>
+
+      <div class="orb orb-mana" id="orb-mana">
+        <div class="orb-fill"></div>
+        <div class="orb-gloss"></div>
+        <div class="orb-text"><span class="v">60</span><span class="sep">/</span><span class="m">60</span></div>
+      </div>
+    </div>
+
+    <div id="log"></div>
+  </div>
+
+  <!-- ============ 面板 ============ -->
+  <div id="panels">
+    <!-- 背包 -->
+    <section class="panel" id="panel-inventory" hidden>
+      <header><h2>背包</h2><button class="close" data-close="panel-inventory">✕</button></header>
+      <div class="pbody inv-body">
+        <div class="col-equip">
+          <div class="doll" id="equip-doll"></div>
+          <div class="mini-stats" id="mini-stats"></div>
+        </div>
+        <div class="col-inv">
+          <div class="grid" id="inv-grid"></div>
+          <footer class="inv-foot">
+            <span>金币 <b id="inv-gold">0</b></span>
+            <button class="btn" id="btn-sort">整理</button>
+            <button class="btn" id="btn-sell-junk">出售白装</button>
+            <button class="btn" id="btn-sell-magic">出售魔法及以下</button>
+          </footer>
+        </div>
+      </div>
+    </section>
+
+    <!-- 角色 -->
+    <section class="panel" id="panel-character" hidden>
+      <header><h2>角色</h2><button class="close" data-close="panel-character">✕</button></header>
+      <div class="pbody char-body">
+        <div class="col-attrs">
+          <h3>属性点 <b id="pts-attr">0</b></h3>
+          <div id="attr-list"></div>
+          <div class="derived" id="derived-list"></div>
+        </div>
+        <div class="col-skills">
+          <h3>技能点 <b id="pts-skill">0</b></h3>
+          <div id="skill-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 商店 -->
+    <section class="panel" id="panel-vendor" hidden>
+      <header><h2>流浪商人 · 加兹</h2><button class="close" data-close="panel-vendor">✕</button></header>
+      <div class="pbody vendor-body">
+        <div class="col-buy">
+          <h3>购买</h3>
+          <div id="vendor-list" class="vlist"></div>
+          <p class="hint">赌一把：随机稀有装备，等级随当前层数提升。</p>
+        </div>
+        <div class="col-sell">
+          <h3>出售（点击物品出售）</h3>
+          <div id="vendor-inv" class="grid small"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 帮助 -->
+    <section class="panel" id="panel-help" hidden>
+      <header><h2>操作与玩法</h2><button class="close" data-close="panel-help">✕</button></header>
+      <div class="pbody help-body">
+        <div class="help-cols">
+          <div>
+            <h3>操作</h3>
+            <ul>
+              <li><b>操作模式</b>可在设置（O）中切换，两套模式各有独立按键绑定。</li>
+              <li><b>鼠标模式</b>：左键移动（按住可持续走位）· 右键普攻 · <b>1 2 3 4</b> 释放技能</li>
+              <li><b>WASD 模式</b>：<b>W A S D</b> 移动 · 左键普攻（不移动）· 右键技能1 · <b>1 2 3</b> 释放技能 2/3/4</li>
+              <li><b>Shift + 左键</b> 朝该方向普攻　<b>Ctrl + 左键</b> 强制移动到该点</li>
+              <li><b>空格</b> 翻滚闪避（短暂无敌）</li>
+              <li><b>Q / E</b> 喝生命 / 法力药水　<b>F</b> 拾取 / 与人交谈</li>
+              <li><b>I / C / V / H</b> 背包 / 角色 / 商人 / 帮助　<b>M</b> 大地图　<b>O</b> 设置</li>
+              <li><b>G</b> 做装工坊　<b>K</b> 仓库　<b>B</b> 城镇建设　<b>T</b> 往返城镇/深渊</li>
+              <li><b>Esc</b> 暂停　按住 <b>Alt</b> 显示地面物品名</li>
+              <li><b>Shift + 点击</b> 物品：快速装备 / 快速出售</li>
+            </ul>
+          </div>
+          <div>
+            <h3>玩法</h3>
+            <ul>
+              <li>营地南侧的 <b class="c-rare">深渊之门</b> 通往地牢；入口处的 <b class="c-magic">回城传送门</b> 按 <b>F</b> 把战利品带回城镇。</li>
+              <li>击杀怪物填满进度条后，传送门开启，进入更深层；每 5 层是 <b class="c-boss">深渊领主</b>。</li>
+              <li>装备稀有度：<span class="c-common">普通</span> → <span class="c-magic">魔法</span> → <span class="c-rare">稀有</span> → <span class="c-unique">暗金/传奇</span>。</li>
+              <li>词缀档位：<b>T1 最强</b>（红）→ <b>T2</b>（粉）→ <b>T3-T4</b>（青）→ <b>T5-T6</b>（绿）→ <b>T7-T8 最弱</b>（灰）；同档内数值随物品等级继续增长。</li>
+              <li><b>做装</b>：用晋升石 / 炼化石 / 混沌石 / 点金石等通货改造装备，详见工坊（G）。</li>
+              <li>分解装备得到 <b class="c-magic">深渊残晶</b>，用于升级城镇建筑换取永久加成。</li>
+              <li>死亡不会丢进度，但会损失 10% 金币并在本层入口复活。</li>
+              <li>游戏有 <b>3 个存档位</b>，可同时培养不同角色。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 做装工坊 -->
+    <section class="panel" id="panel-craft" hidden>
+      <header><h2>秘法工坊 · 做装</h2><button class="close" data-close="panel-craft">✕</button></header>
+      <div class="pbody craft-body">
+        <div class="col-craft-left">
+          <h3>物品栏 <span class="dim small">点击物品放上工作台</span></h3>
+          <div id="craft-inv" class="grid small"></div>
+          <h3>装备栏 <span class="dim small">身上的装备也能改造</span></h3>
+          <div id="craft-gear" class="craft-gear"></div>
+          <div class="craft-foot">
+            <span id="craft-shards">深渊残晶 0</span>
+            <span class="dim small">通货石数量会自动统计背包 + 仓库</span>
+          </div>
+        </div>
+        <div class="col-craft-bench">
+          <div class="bench" id="craft-bench"></div>
+          <div id="craft-log" class="craft-log"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 铁匠铺 -->
+    <section class="panel" id="panel-blacksmith" hidden>
+      <header><h2>铁匠铺 · 分解与锻造</h2><button class="close" data-close="panel-blacksmith">✕</button></header>
+      <div class="pbody bs-body">
+        <div class="bs-head">
+          <span>深渊残晶 <b id="bs-shards">0</b></span>
+          <span class="dim small" id="bs-bonus"></span>
+          <button class="btn" id="btn-salvage-junk">分解所有白装</button>
+          <button class="btn" id="btn-salvage-magic">分解魔法及以下</button>
+          <button class="btn" id="btn-bs-town">城镇建设 [B]</button>
+        </div>
+        <div id="bs-list" class="vlist"></div>
+      </div>
+    </section>
+
+    <!-- 仓库 -->
+    <section class="panel" id="panel-stash" hidden>
+      <header><h2>仓库</h2><button class="close" data-close="panel-stash">✕</button></header>
+      <div class="pbody stash-body">
+        <div class="tabs">
+          <button class="tab on" data-tab="items">物品仓库</button>
+          <button class="tab" data-tab="currency">通货与宝石（跨存档共享）</button>
+        </div>
+        <div id="stash-page-items">
+          <div class="stash-cols">
+            <div class="col-stash">
+              <h3>背包 <span class="dim small">（点击存入仓库 · Shift 全部存入）</span></h3>
+              <div id="stash-inv" class="grid small"></div>
+            </div>
+            <div class="col-stash">
+              <h3>仓库 <span class="dim small" id="stash-cap"></span></h3>
+              <div id="stash-grid" class="grid small"></div>
+            </div>
+          </div>
+        </div>
+        <div id="stash-page-currency" hidden>
+          <div class="shared-head">
+            <span id="shared-summary" class="small"></span>
+            <button class="btn" id="btn-deposit-all">快速存入背包里的全部通货与宝石</button>
+          </div>
+          <p class="hint">共享仓库与角色存档分开保存：<b>所有存档位共用</b>，每种最多 9999 个。左键取出 1 个，<b>Shift + 左键</b> 取出一整叠。</p>
+          <h3>通货石</h3>
+          <div id="shared-orbs" class="shared-grid"></div>
+          <h3>宝石</h3>
+          <div id="shared-gems" class="shared-grid"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 珠宝匠 -->
+    <section class="panel" id="panel-jeweler" hidden>
+      <header><h2>珠宝匠 · 凯</h2><button class="close" data-close="panel-jeweler">✕</button></header>
+      <div class="pbody jeweler-body">
+        <div class="jewel-left">
+          <div class="jeweler-head">
+            <span id="jewel-summary" class="small"></span>
+            <button class="btn" id="btn-gem-all">一键合成全部</button>
+          </div>
+          <p class="hint">每行一种宝石，5 个格子对应 5 个品质：<b>3 颗同种同品质 → 1 颗更高品质</b>。带 <b>合成 →</b> 标记的格子点击即可合成。</p>
+          <div id="jeweler-list" class="jewel-list"></div>
+        </div>
+        <div class="jewel-right">
+          <div class="jeweler-head">
+            <span class="small">已镶嵌的宝石 <b id="gem-pull-count"></b></span>
+            <button class="btn" id="btn-gem-pull-all">全部取下</button>
+          </div>
+          <p class="hint">点击宝石即可从装备上取下，放回背包。</p>
+          <div id="gem-pull-list" class="pull-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 城镇建设 -->
+    <section class="panel" id="panel-town" hidden>
+      <header><h2>城镇建设 · 余烬营地</h2><button class="close" data-close="panel-town">✕</button></header>
+      <div class="pbody town-body">
+        <div class="town-head">
+          <span>金币 <b id="town-gold">0</b></span>
+          <span>深渊残晶 <b id="town-shards">0</b></span>
+          <span class="dim small">升级建筑可获得永久加成。分解装备（铁匠铺）是残晶的主要来源。</span>
+        </div>
+        <div id="town-buildings" class="blist"></div>
+      </div>
+    </section>
+
+    <!-- 深渊之门（只负责进入深渊） -->
+    <section class="panel" id="panel-rift" hidden>
+      <header><h2>深渊之门</h2><button class="close" data-close="panel-rift">✕</button></header>
+      <div class="pbody rift-body">
+        <p class="hint" id="rift-info"></p>
+        <div class="rift-pick">
+          <button class="btn" id="rift-minus">− 10</button>
+          <button class="btn" id="rift-minus1">− 1</button>
+          <span id="rift-floor">第 1 层</span>
+          <button class="btn" id="rift-plus1">+ 1</button>
+          <button class="btn" id="rift-plus">+ 10</button>
+          <button class="btn big" id="rift-enter">进入深渊</button>
+        </div>
+        <div id="rift-diff" class="dim small"></div>
+        <p class="hint dim">想重新分配属性 / 被动 / 技能点，去找城里的<b class="c-rare">深渊向导 · 塞拉</b>。</p>
+      </div>
+    </section>
+
+    <!-- 深渊向导（只负责洗点） -->
+    <section class="panel" id="panel-respec" hidden>
+      <header><h2>深渊向导 · 塞拉</h2><button class="close" data-close="panel-respec">✕</button></header>
+      <div class="pbody respec-body">
+        <div class="guide-say" id="guide-say"></div>
+        <div class="rs-head">
+          <span>金币 <b id="rs-gold">0</b></span>
+          <span>深渊残晶 <b id="rs-shards">0</b></span>
+          <span class="dim small">费用随人物等级增长；被动与技能还随「已投入的点数」增长（装备给的技能等级不计入）。</span>
+        </div>
+        <div class="rs-sub">属性点</div>
+        <div id="rs-attr" class="rs-box"></div>
+        <div class="rs-sub">被动天赋</div>
+        <div id="rs-passives" class="rs-box"></div>
+        <div class="rs-sub">技能</div>
+        <div id="rs-skills" class="rs-box"></div>
+      </div>
+    </section>
+
+    <!-- 技能强化窗口 -->
+    <section class="panel wide" id="panel-skill" hidden>
+      <header><h2 id="sk-title">技能</h2><button class="close" data-close="panel-skill">✕</button></header>
+      <div class="pbody skill-body">
+        <div class="sk-head">
+          <div class="sk-bigicon" id="sk-icon">✦</div>
+          <div class="sk-headinfo">
+            <div class="sk-hname" id="sk-name"></div>
+            <div class="sk-hsub" id="sk-sub"></div>
+            <div class="sk-hdesc" id="sk-desc"></div>
+            <div class="sk-hstats" id="sk-hstats"></div>
+          </div>
+          <div class="sk-headctl">
+            <button class="btn big" id="sk-add">+1 点</button>
+            <div class="dim small">分支 5 / 10 / 15 / 20 / 25 级解锁<br>同档位只能选一个，换分支需洗点</div>
+          </div>
+        </div>
+        <div class="sk-treewrap"><div class="sk-tree" id="sk-tree"></div></div>
+        <div class="sk-foot" id="sk-detail"></div>
+      </div>
+    </section>
+
+    <!-- 设置 -->
+    <section class="panel" id="panel-settings" hidden>
+      <header><h2>设置</h2><button class="close" data-close="panel-settings">✕</button></header>
+      <div class="pbody settings-body">
+        <h3>操作模式</h3>
+        <div id="mode-pick" class="mode-pick"></div>
+        <p class="hint" id="mode-desc"></p>
+        <h3>按键绑定 <span class="dim small" id="bind-mode-label"></span></h3>
+        <p class="hint">点击按键按钮后按下新按键即可改键；<b>Delete</b> 清除绑定，<b>Esc</b> 放弃修改。同一按键在同模式下只会保留一个动作。</p>
+        <div id="bind-list" class="bind-list"></div>
+        <p class="hint" id="bind-warn" style="color:#ff8f8f"></p>
+        <div class="settings-foot">
+          <button class="btn" id="btn-bind-reset">恢复默认按键</button>
+          <button class="btn" id="btn-sound">音效：开</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 暂停 -->
+    <section class="panel center" id="panel-menu" hidden>
+      <header><h2 id="menu-title">暂停</h2></header>
+      <div class="pbody menu-body">
+        <p id="menu-sub" class="dim"></p>
+        <div class="menu-btns">
+          <button class="btn big" id="btn-resume">继续游戏</button>
+          <button class="btn big" id="btn-menu-settings">游戏设置</button>
+          <button class="btn big" id="btn-save">保存进度</button>
+          <button class="btn big" id="btn-slots">返回存档列表</button>
+          <button class="btn big danger" id="btn-reset">删除本存档</button>
+        </div>
+        <div id="menu-record" class="dim small"></div>
+        <div class="ver-line" id="menu-version"></div>
+      </div>
+    </section>
+
+    <!-- 升级 -->
+    <div id="levelup-toast" hidden><b>等级提升！</b><span id="levelup-sub"></span></div>
+  </div>
+
+  <!-- 起始界面 -->
+  <div id="start-screen">
+    <div class="ss-inner">
+      <h1>暗影深渊</h1>
+      <p class="ss-sub">SHADOW ABYSS — 刷宝动作角色扮演</p>
+      <div id="slot-list" class="slot-list"></div>
+      <div id="class-pick" hidden></div>
+      <div class="ss-foot">
+        <button class="btn" id="btn-back-slots" hidden>← 返回存档列表</button>
+        <p class="hint dim" id="ss-hint">选择一个存档位开始你的冒险。</p>
+        <p class="ver-line" id="ss-version"></p>
+      </div>
+    </div>
+  </div>
+
+  <div id="tooltip" hidden></div>
+  <div id="held-gem" hidden></div>
+  <div id="held-orb" hidden></div>
+  <div id="ctxmenu" hidden></div>
+  <div id="fatal" hidden></div>
+</div>
+
+<script src="js/core.js"></script>
+<script src="js/data.js"></script>
+<script src="js/loot.js"></script>
+<script src="js/stats.js"></script>
+<script src="js/dungeon.js"></script>
+<script src="js/town.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/render.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/game.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

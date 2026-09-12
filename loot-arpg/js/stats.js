@@ -1,0 +1,331 @@
+/* ============================================================
+ *  暗影深渊 · stats.js
+ *  属性聚合（等级 / 装备 / 宝石 / 被动）与派生数值
+ * ============================================================ */
+(function (root) {
+  'use strict';
+  const G = root.G;
+  const D = G.DATA;
+  const S = (G.Stats = {});
+
+  S.empty = function () {
+    const o = {};
+    for (const k in D.STATS) o[k] = 0;
+    return o;
+  };
+  S.addStat = function (dst, key, v) {
+    if (key == null || !isFinite(v)) return;
+    if (dst[key] == null) dst[key] = 0;
+    dst[key] += v;
+  };
+
+  /* ---------------- 单件装备的属性总和 ---------------- */
+  S.itemStats = function (item, out) {
+    out = out || S.empty();
+    if (!item || item.cat !== 'equip') return out;
+    (item.implicit || []).forEach((s) => S.addStat(out, s.stat, s.value));
+    (item.affixes || []).forEach((a) => S.addStat(out, a.stat, a.value));
+    (item.gems || []).forEach((g) => {
+      if (!g) return;
+      const st = D.gemStat(g.gem, g.tier);
+      S.addStat(out, st.stat, st.value);
+    });
+    return out;
+  };
+
+  S.gearStats = function (gear) {
+    const out = S.empty();
+    if (!gear) return out;
+    D.gearSlots().forEach((slot) => { if (gear[slot]) S.itemStats(gear[slot], out); });
+    return out;
+  };
+
+  S.passiveStats = function (player) {
+    const out = {};
+    if (!player || !player.passives) return out;
+    for (const id in player.passives) {
+      const lv = player.passives[id] | 0;
+      if (lv <= 0) continue;
+      const p = D.passiveById[id];
+      if (!p) continue;
+      const st = p.stats(Math.min(lv, p.max));
+      for (const k in st) S.addStat(out, k, st[k]);
+    }
+    return out;
+  };
+
+  /* ---------------- 城镇建筑加成 ---------------- */
+  S.buildingLevel = function (player, id) {
+    if (!player || !player.town || !player.town.buildings) return 1;
+    const lv = player.town.buildings[id];
+    return Math.max(1, lv | 0);
+  };
+
+  S.townStats = function (player) {
+    const out = {};
+    if (!player || !player.town) return out;
+    D.BUILDINGS.forEach((b) => {
+      if (!b.stats) return;
+      const lv = S.buildingLevel(player, b.id);
+      const st = b.stats(Math.min(lv, b.max));
+      for (const k in st) S.addStat(out, k, st[k]);
+    });
+    return out;
+  };
+
+  /* ---------------- 技能等级 ---------------- */
+  S.skillLevel = function (player, skillId) {
+    let lv = (player.skills && player.skills[skillId]) | 0;
+    const raw = player._raw;
+    if (raw) {
+      lv += raw.allSkills | 0;
+      lv += (raw['skill:' + skillId] | 0);
+    }
+    return Math.max(0, lv);
+  };
+
+  /* ---------------- 技能强化分支 ----------------
+   * 解锁与生效都看「实际技能等级」（手动投入 + 装备 / 宝石 / 天赋加成）：
+   *   · 装备把技能等级顶过档位需求 → 可以正常分配，效果也正常生效
+   *   · 脱下装备后等级掉回需求以下 → 选择保留，但强化暂时失效
+   */
+  S.chosenBranch = function (player, skillId, tier) {
+    const sel = player && player.skillBranches && player.skillBranches[skillId];
+    return (sel && sel[tier]) || null;
+  };
+  // 该档位当前是否开放（技能实际等级达到档位需求）
+  S.branchTierOpen = function (player, skillId, tier) {
+    return S.skillLevel(player, skillId) >= tier;
+  };
+  // 已选择的分支对象；等级不足时返回 null（= 不生效）
+  S.branchActive = function (player, skillId, tier) {
+    const id = S.chosenBranch(player, skillId, tier);
+    if (!id) return null;
+    if (!S.branchTierOpen(player, skillId, tier)) return null;
+    return D.branchById(skillId, id);
+  };
+  // 已选择但当前失效（被脱装备顶掉了等级）
+  S.branchDormant = function (player, skillId, tier) {
+    const id = S.chosenBranch(player, skillId, tier);
+    if (!id) return null;
+    if (S.branchTierOpen(player, skillId, tier)) return null;
+    return D.branchById(skillId, id);
+  };
+  // 汇总某个技能当前「生效中」的分支修饰符
+  S.skillMods = function (player, skillId) {
+    const out = {};
+    if (!player || !skillId || !D.skillBranches(skillId)) return out;
+    D.SKILL_TIERS.forEach((tier) => {
+      const b = S.branchActive(player, skillId, tier);
+      if (!b) return;
+      const mods = b.mods || {};
+      for (const k in mods) {
+        const v = mods[k];
+        if (k === 'elem') {
+          out.elem = out.elem || {};
+          for (const e in v) out.elem[e] = (out.elem[e] || 0) + v[e];
+        } else if (k === 'execute') {
+          if (!out.execute || v.dmg > out.execute.dmg) out.execute = { hp: v.hp, dmg: v.dmg };
+        } else {
+          out[k] = (out[k] || 0) + v;
+        }
+      }
+    });
+    return out;
+  };
+  // 把分支修饰符套用到技能定义上，得到本次施放使用的技能形态
+  S.skillShape = function (player, sk) {
+    if (!sk) return sk;
+    const mods = S.skillMods(player, sk.id);
+    const s = Object.assign({}, sk);
+    s.mods = mods;
+    if (mods.radius) {
+      if (sk.type === 'chain' || sk.type === 'dash' || sk.type === 'leap' || sk.type === 'teleport') {
+        if (sk.range) s.range = sk.range * (1 + mods.radius / 100);
+      } else if (sk.type === 'fan') {
+        if (sk.spread) s.spread = sk.spread * (1 + mods.radius / 100);
+      } else if (sk.radius) {
+        s.radius = sk.radius * (1 + mods.radius / 100);
+      }
+      if (sk.novaOnLand) s.novaOnLand = Object.assign({}, sk.novaOnLand, { radius: sk.novaOnLand.radius * (1 + mods.radius / 100) });
+    }
+    if (mods.count && sk.count != null) s.count = sk.count + mods.count;
+    if (sk.proj && (mods.speed || mods.size || mods.explode)) {
+      s.proj = Object.assign({}, sk.proj);
+      if (mods.speed) s.proj.speed = sk.proj.speed * (1 + mods.speed / 100);
+      if (mods.size) s.proj.size = sk.proj.size * (1 + mods.size / 100);
+      if (mods.explode && sk.proj.explode) s.proj.explode = sk.proj.explode * (1 + mods.explode / 100);
+    }
+    if (mods.pierce) s.pierce = (sk.pierce || 0) + mods.pierce;
+    if (mods.dur && sk.dur) s.dur = sk.dur + mods.dur;
+    if (mods.dot) {
+      if (sk.dot) s.dot = Object.assign({}, sk.dot, { mult: sk.dot.mult * (1 + mods.dot / 100) });
+      if (sk.ignite) s.ignite = Object.assign({}, sk.ignite, { mult: sk.ignite.mult * (1 + mods.dot / 100) });
+    }
+    if (mods.stun) s.stun = (sk.stun || 0) + mods.stun;
+    if (mods.slow) s.slow = Math.min(0.9, (sk.slow || 0) + mods.slow / 100);
+    if (mods.cost) s.cost = Math.max(0, Math.round((sk.cost || 0) * (1 + mods.cost / 100)));
+    if (mods.cd && sk.cd) s.cd = Math.max(0.2, sk.cd * (1 + mods.cd / 100));
+    if (mods.buff && sk.buff) {
+      const k = 1 + mods.buff / 100;
+      s.buff = Object.assign({}, sk.buff, {
+        dmg: (sk.buff.dmg || 0) * k, perDmg: (sk.buff.perDmg || 0) * k,
+        armor: (sk.buff.armor || 0) * k, perArmor: (sk.buff.perArmor || 0) * k,
+      });
+    }
+    return s;
+  };
+  // 已投入点数（不含装备）—— 洗点费用与被洗掉的点数都只看这个
+  S.investedPoints = (player, skillId) => ((player && player.skills && player.skills[skillId]) | 0) || 0;
+
+  /* ---------------- 汇总原始属性 ---------------- */
+  S.collect = function (player) {
+    const cls = D.classById(player.cls);
+    const raw = S.empty();
+    // 等级成长
+    raw.str = cls.base.str + cls.perLevel.str * (player.level - 1);
+    raw.dex = cls.base.dex + cls.perLevel.dex * (player.level - 1);
+    raw.int = cls.base.int + cls.perLevel.int * (player.level - 1);
+    raw.vit = cls.base.vit + cls.perLevel.vit * (player.level - 1);
+    // 手动分配
+    const al = player.alloc || {};
+    raw.str += al.str | 0; raw.dex += al.dex | 0; raw.int += al.int | 0; raw.vit += al.vit | 0;
+    // 被动
+    const ps = S.passiveStats(player);
+    for (const k in ps) S.addStat(raw, k, ps[k]);
+    // 城镇建筑
+    const ts = S.townStats(player);
+    for (const k in ts) S.addStat(raw, k, ts[k]);
+    // 装备（含宝石）
+    const gs = S.gearStats(player.gear);
+    for (const k in gs) S.addStat(raw, k, gs[k]);
+    // buff 中的属性类加成
+    if (player.buffs) {
+      player.buffs.forEach((b) => {
+        if (b.stats) for (const k in b.stats) S.addStat(raw, k, b.stats[k]);
+      });
+    }
+    // 取整显示属性
+    ['str', 'dex', 'int', 'vit'].forEach((k) => { raw[k] = Math.floor(raw[k]); });
+    player._raw = raw;
+    return raw;
+  };
+
+  const RES_KEYS = ['fire', 'cold', 'lightning', 'poison'];
+  const RES_STAT = { fire: 'fireResist', cold: 'coldResist', lightning: 'lightResist', poison: 'poisonResist' };
+
+  /* ---------------- 派生最终数值 ---------------- */
+  S.derive = function (player) {
+    const cls = D.classById(player.cls);
+    const raw = S.collect(player);
+    const diff = D.diffOf(player.diffIdx | 0);
+    const a = { str: raw.str, dex: raw.dex, int: raw.int, vit: raw.vit };
+    player.attrs = a;
+
+    const st = {
+      maxLife: Math.max(1, Math.round((cls.lifeBase + cls.lifePerLevel * (player.level - 1) + a.vit * cls.lifePerVit + raw.life) * (1 + raw.lifePct / 100))),
+      maxMana: Math.max(1, Math.round((cls.manaBase + 2.4 * (player.level - 1) + a.int * cls.manaPerInt + raw.mana) * (1 + raw.manaPct / 100))),
+      armor: Math.max(0, Math.round((raw.armor + a.dex * 1.4 + a.str * 1.0) * (1 + raw.armorPct / 100))),
+      crit: G.clamp(5 + a.dex * 0.12 + raw.crit, 0, 80),
+      critDmg: 150 + raw.critDmg,
+      apsMul: 1 + raw.aps / 100,
+      moveSpeed: G.BALANCE.playerBaseSpeed * (1 + raw.moveSpeed / 100),
+      cdr: G.clamp(raw.cdr, 0, 60),
+      mf: raw.mf, gf: raw.gf, xpBonus: raw.xpBonus,
+      lifeSteal: raw.lifeSteal, manaSteal: raw.manaSteal, lifeOnHit: raw.lifeOnHit,
+      lifeRegen: raw.lifeRegen + a.vit * 0.12 + 1,
+      manaRegen: raw.manaRegen + a.int * 0.1 + 1.2,
+      thorns: raw.thorns,
+      areaDmg: raw.areaDmg,
+      dmgReduce: G.clamp(raw.dmgReduce, 0, 65),
+      pickup: 46 + raw.pickup,
+      dodge: G.clamp(raw.dodge, 0, 60),
+      dmgMult: (1 + raw.dmgPct / 100) * (1 + (a[cls.primary] || 0) * 0.009),
+      elemBonus: {
+        fire: raw.fireDmg / 100, cold: raw.coldDmg / 100,
+        lightning: raw.lightDmg / 100, poison: raw.poisonDmg / 100, physical: raw.physDmg / 100,
+      },
+      added: { fire: raw.addFire, cold: raw.addCold, lightning: raw.addLight, poison: raw.addPoison },
+      allSkills: raw.allSkills | 0,
+      res: {}, raw: raw,
+    };
+    RES_KEYS.forEach((k) => {
+      const val = (raw[RES_STAT[k]] || 0) + raw.allResist - diff.resistPen;
+      st.res[k] = G.clamp(val, -100, 400);
+    });    // 武器
+    const w = player.gear && player.gear.weapon;
+    if (w) {
+      const bonus = 1 + (raw.dmgPct || 0) / 100 + (raw.physDmg || 0) / 100;
+      st.weaponMin = Math.max(1, w.min * bonus);
+      st.weaponMax = Math.max(st.weaponMin + 1, w.max * bonus);
+      st.attackSpeed = w.aps * st.apsMul;
+      st.weaponKind = w.kind;
+    } else {
+      st.weaponMin = 4; st.weaponMax = 9; st.attackSpeed = 1.25 * st.apsMul; st.weaponKind = 'melee';
+    }
+    st.weaponDps = (st.weaponMin + st.weaponMax) / 2 * st.attackSpeed;
+    st.attackInterval = 1 / Math.max(0.2, st.attackSpeed);
+
+    /* ---- 暗金特效带来的被动加成 ---- */
+    const powers = (G.Combat && G.Combat.powers) ? G.Combat.powers(player) : null;
+    st.powers = powers || new Set();
+    if (powers) {
+      if (powers.has('sage')) st.xpBonus += 50;
+      if (powers.has('vampiric')) st.lifeSteal += 5;
+      if (powers.has('greed')) st.gf *= 2;
+      if (powers.has('juggernaut')) st.dmgMult *= 1 + Math.floor(st.armor / 200) * 0.03;
+    }
+
+    // 生命/法力上限变化时保持比例
+    player.stats = st;
+    if (player.life == null) player.life = st.maxLife;
+    if (player.mana == null) player.mana = st.maxMana;
+    player.life = Math.min(player.life, st.maxLife);
+    player.mana = Math.min(player.mana, st.maxMana);
+    if (player.recalcFull) { player.life = st.maxLife; player.mana = st.maxMana; player.recalcFull = false; }
+    return st;
+  };
+
+  // 普通攻击的出手间隔（含普通攻击技能「攻击速度」分支的加成）
+  S.basicAttackInterval = function (player) {
+    if (!player || !player.stats) return 0.8;
+    const base = player.stats.attackInterval;
+    const mods = S.skillMods(player, player.cls + '_basic');
+    return mods.aps ? base / (1 + mods.aps / 100) : base;
+  };
+
+  /* ---------------- 抗性与护甲减伤 ---------------- */
+  S.resistMitigation = (resVal) => {
+    const r = Math.max(-100, resVal);
+    if (r >= 0) return Math.min(0.75, r / (r + 150));
+    return -Math.min(1.5, -r / 150); // 负抗性 = 额外受伤
+  };
+  S.armorMitigation = (armor, attackerLevel) => {
+    const a = Math.max(0, armor);
+    return a / (a + 55 + 15 * (attackerLevel || 1));
+  };
+
+  /* ---------------- 伤害组件 ---------------- */
+  // 返回 { physical, fire, cold, lightning, poison } 的伤害范围（未暴击、未减伤）
+  S.attackComponents = function (player, skill, level) {
+    const st = player.stats;
+    const s = skill || {};
+    const lv = Math.max(1, level || 1);
+    const scaleLv = D.skillScaleLevel(lv);      // 25 级后成长衰减
+    const skillMult = (s.base != null ? (s.base + (s.per || 0) * (scaleLv - 1)) / 100 : 1);
+    const wm = s.weaponMult == null ? 1 : s.weaponMult;
+    const wAvg = (st.weaponMin + st.weaponMax) / 2;
+    const base = wAvg * wm * skillMult * st.dmgMult;
+    const main = s.elem || 'physical';
+    const out = { physical: 0, fire: 0, cold: 0, lightning: 0, poison: 0 };
+    out[main] += base * (1 + (st.elemBonus[main] || 0));
+    // 装备附加元素伤害
+    for (const k in st.added) {
+      const v = st.added[k];
+      if (v > 0) out[k] += v * 0.9 * (1 + (st.elemBonus[k] || 0)) * (0.6 + 0.4 * wm);
+    }
+    return out;
+  };
+
+  S.xpToNext = (level) => G.BALANCE.xpCurve(level);
+})(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -4826,6 +4826,37 @@ section('22. 一键卖/分解 · 背包扩容 · 过滤器改版 · 训练场 ·
   G.UI.openAffixPick(0, 0);
   ok(G.UI.closeAffixPick() === true && G.UI.closeAffixPick() === false, '词缀面板的关闭函数返回 true / 重复关闭返回 false');
 
+  /* ---- 过滤器细则下拉 / 冲突隐藏 / 词缀文案 ---- */
+  ok(F.condType('affix').ops.length === 1 && F.condType('type').ops.length === 1 &&
+    F.condType('twoHand').ops.length === 1 && F.condType('canEquip').ops.length === 1,
+    '只有一种判定方式的细则不再显示比较方式下拉');
+  ok(F.condType('ilvl').ops.length === 3 && F.condType('slot').ops.length === 2, '其它细则仍有多个选项');
+  F.data.rules = [{
+    action: 'hide', enabled: true, conds: [
+      { type: 'type', op: 'is', value: 'dagger' },
+      { type: 'affix', op: 'has', value: 1, affixIds: ['p_str'] },
+      { type: 'ilvl', op: '>=', value: 50 },
+    ],
+  }];
+  G.UI.renderFilter();
+  ok((String(G.el('filter-rules').children[0].innerHTML).match(/data-field="op"/g) || []).length === 1,
+    '三个细则里只剩一个带比较方式下拉',
+    (String(G.el('filter-rules').children[0].innerHTML).match(/data-field="op"/g) || []).length + ' 个');
+  const poolType = F.affixPool([{ type: 'type', op: 'is', value: 'dagger' }], true);
+  ok(poolType.length > 0 && poolType.length < G.DATA.AFFIXES.length,
+    '选了装备类型后仍有可选词缀（不会再全被隐藏）', poolType.length + ' / ' + G.DATA.AFFIXES.length);
+  const unlimAffix = G.DATA.AFFIXES.filter((a) => !a.slots || !a.slots.length)[0];
+  ok(poolType.some((a) => a.id === unlimAffix.id), '不限部位的词缀留在可选池里', unlimAffix.id);
+  const lblOf = (id) => F.affixLabel(G.DATA.affixById[id]);
+  ok(lblOf('p_skill') === '+技能等级', '「专精之」显示 +技能等级', lblOf('p_skill'));
+  ok(lblOf('p_armor') === '+护甲' && lblOf('p_armorPct') === '护甲%', '固定护甲 / 百分比护甲区分开',
+    lblOf('p_armor') + ' | ' + lblOf('p_armorPct'));
+  const addFireA = G.DATA.AFFIXES.filter((a) => a.stat === 'addFire')[0];
+  const fireDmgA = G.DATA.AFFIXES.filter((a) => a.stat === 'fireDmg')[0];
+  ok(F.affixLabel(addFireA) === '+火焰伤害' && F.affixLabel(fireDmgA) === '火焰伤害%',
+    '附加火焰伤害 / 火焰伤害% 区分开', F.affixLabel(addFireA) + ' | ' + F.affixLabel(fireDmgA));
+  F.data.rules = [];
+
   report('一键卖/分解、背包扩容、过滤器改版、训练场、攻速归一均已覆盖');
 }
 

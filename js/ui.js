@@ -907,7 +907,7 @@
         lb.className = 'afx-item' + (on ? ' on' : '');
         lb.innerHTML = '<input type="checkbox" data-afx="' + a.id + '"' + (on ? ' checked' : '') + '>' +
           '<span class="an">' + a.name + '</span>' +
-          '<span class="as">' + ((D.STATS[a.stat] && D.STATS[a.stat].name) || a.stat) + '</span>';
+          '<span class="as">' + F.affixLabel(a) + '</span>';
         wrap.appendChild(lb);
       });
       list.appendChild(wrap);
@@ -1062,9 +1062,12 @@
             '<select data-rule="' + ri + '" data-cond="' + ci + '" data-field="type">' +
             F.COND_TYPES.map((x) => '<option value="' + x.id + '"' + (x.id === cond.type ? ' selected' : '') + '>' + x.name + '</option>').join('') +
             '</select>' +
-            '<select data-rule="' + ri + '" data-cond="' + ci + '" data-field="op">' +
-            t.ops.map((o) => '<option value="' + o.id + '"' + (o.id === cond.op ? ' selected' : '') + '>' + o.name + '</option>').join('') +
-            '</select>' +
+            // 只有一种判定方式的细则（装备类型 / 是否双手 / 当前可穿戴 / 包含词缀）不显示这个下拉
+            (t.ops.length > 1
+              ? ('<select data-rule="' + ri + '" data-cond="' + ci + '" data-field="op">' +
+                t.ops.map((o) => '<option value="' + o.id + '"' + (o.id === cond.op ? ' selected' : '') + '>' + o.name + '</option>').join('') +
+                '</select>')
+              : '') +
             UI.filterValueInput(ri, ci, cond, t) +
             '<button class="btn tiny danger" data-rule="' + ri + '" data-cond="' + ci + '" data-act="delCond">✕</button>' +
             '</div>';

@@ -69,9 +69,10 @@
       get: (it) => (D.baseById(it.base) || {}).type || it.type || '',
     },
     {
-      // 勾选词缀 + 「至少包含 N 条」：value 存最少条数，affixIds 存勾选的词缀 id
+      // 勾选词缀 + 「至少包含 N 条」：value 存最少条数，affixIds 存勾选的词缀 id。
+      // 只有一种判定方式，所以界面上不显示「比较方式」下拉
       id: 'affix', name: '包含词缀', value: 'affixPick', min: 1, max: 12,
-      ops: [{ id: 'has', name: '包含至少' }, { id: 'not', name: '不含这么多' }],
+      ops: [{ id: 'has', name: '至少包含' }],
       get: (it, ctx, cond) => F.countAffixes(it, cond),
     },
     {
@@ -177,19 +178,39 @@
   };
 
   /* 词缀选择面板的可选池。
-   * hideConflict = true 且规则锁定了部位 / 类型时，只留下真的会出现在那些部位上的词缀。 */
+   * hideConflict = true 且规则锁定了部位 / 类型时，只留下「真的会出现在这些部位上」的词缀：
+   *   · 没写 slots 的词缀 = 所有部位都能出 → 保留
+   *   · 写了 slots 的词缀 → 与允许的部位有交集才保留 */
   F.affixPool = function (conds, hideConflict) {
     const all = D.AFFIXES.slice();
     if (hideConflict === false) return all;
     const slots = F.allowedSlots(conds);
     if (!slots || !slots.length) return all;
-    const blocked = {};
-    D.gearSlots().forEach((raw) => {
-      const s = (raw === 'ring1' || raw === 'ring2') ? 'ring' : raw;
-      if (slots.indexOf(s) >= 0) return;                 // 这个部位允许 → 它的词缀都算合法
-      D.affixesForSlot(s, 'prefix').concat(D.affixesForSlot(s, 'suffix')).forEach((a) => { blocked[a.id] = 1; });
+    return all.filter((a) => {
+      if (!a.slots || !a.slots.length) return true;
+      for (let i = 0; i < a.slots.length; i++) {
+        if (slots.indexOf(a.slots[i]) >= 0) return true;
+      }
+      return false;
     });
-    return all.filter((a) => !blocked[a.id]);
+  };
+
+  /* 词缀列表右侧那行小字：把几组同名的属性区分开
+   * （护甲 / 护甲%、附加火焰伤害 / 火焰伤害%、专精之的技能等级……） */
+  const STAT_SHORT = {
+    armor: '+护甲', armorPct: '护甲%',
+    fireDmg: '火焰伤害%', addFire: '+火焰伤害',
+    coldDmg: '冰冷伤害%', addCold: '+冰冷伤害',
+    lightDmg: '闪电伤害%', addLight: '+闪电伤害',
+    poisonDmg: '毒素伤害%', addPoison: '+毒素伤害',
+    lifePct: '生命上限%', manaPct: '法力上限%',
+  };
+  F.affixLabel = function (a) {
+    const st = (a && a.stat) || '';
+    if (st.indexOf('skill:') === 0) return '+技能等级';
+    if (STAT_SHORT[st]) return STAT_SHORT[st];
+    const def = D.STATS[st];
+    return (def && def.name) || st;
   };
   F.clampValue = function (typeId, v) {
     const t = F.condType(typeId);

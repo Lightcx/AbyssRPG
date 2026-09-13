@@ -35,45 +35,62 @@
     return Math.max(1, Math.round(1 + floor * 1.2 + add));
   };
   /* ---------------- 怪物防御成长（物理 / 元素同一条目标曲线） ----------------
-   * 目标减伤： mit(mlvl) = 上限(难度) × (1 - e^(-mlvl/K(难度)))
+   * 基础段： mit = 上限(难度) × (1 - e^(-mlvl/K(难度)))
    *   · 平滑、单调，随深渊层数上升；难度越高上限越高、K 越小（爬得更快 ⇒ 曲线更陡）
    *   · 1~10 层只有几个百分点，前期手感不变
+   * 深层段：60 层起用 smoothstep 平滑过渡到「80 层目标减伤」（monsterDeepMit）
+   *   · 于是 80 层最高难度的常规敌人平均减伤 ≈ 97% ⇒ 等效坚韧 ≈ 血量 ÷ 0.03 ≈ 100 万
+   *   · 100 层以后维持该目标，再往深处只靠血量继续变强
    * 两条通道都对齐这条曲线，所以物理与元素的等效输出基本一致：
    *   · 元素抗性数值 = resistMitigation 的反函数（数值 = 150 × mit / (1 - mit)）
-   *   · 护甲整体缩放 = 「达到该减伤所需的护甲」÷「各怪基础护甲的参考值 × 1.06^mlvl」
+   *   · 护甲整体缩放 = 数值解，使「各怪护甲减伤的平均值」也正好等于该减伤
    *     （每只怪按自己的基础护甲上下浮动，厚甲的更抗物理、脆皮的更怕物理）
-   * 目标值：80 层（mlvl 97~102）平均减伤约 19.5% / 28% / 37% / 46% / 54% / 62%
    */
   G.BALANCE.monsterDefCap = [0.30, 0.40, 0.50, 0.58, 0.65, 0.72];
   G.BALANCE.monsterDefK = [70, 62, 55, 48, 42, 36];
-  G.MONSTER_AVG_ARMOR = 18;          // 各怪基础护甲的参考均值（用于把护甲整体对齐到目标减伤）
+  G.BALANCE.monsterDeepMit = [0.955, 0.9565, 0.958, 0.9595, 0.961, 0.963];   // 80 层（含）之后的目标平均减伤
+  G.BALANCE.monsterDeepFrom = 60;    // 从这一层开始往目标过渡
+  G.BALANCE.monsterDeepTo = 80;      // 到这一层完全等于目标
+  G.MONSTER_AVG_ARMOR = 18;          // 参考值（实际用 G.MONSTER_ARMORS 的均值）
 
-  G.monsterDefMit = function (mlvl, diffIdx) {
+  // mlvl → 层数（没直接给 floor 时的兜底换算）
+  G.mlvlToFloor = function (mlvl, diffIdx) {
+    const add = (D.DIFFICULTIES[G.clamp(diffIdx | 0, 0, D.DIFFICULTIES.length - 1)] || {}).mlvlAdd || 0;
+    return Math.max(1, ((mlvl || 1) - 1 - add) / 1.2);
+  };
+
+  G.monsterDefMit = function (mlvl, diffIdx, floor) {
     const B = G.BALANCE;
     const i = G.clamp(diffIdx | 0, 0, B.monsterDefCap.length - 1);
     const m = Math.max(0, mlvl || 1);
-    return B.monsterDefCap[i] * (1 - Math.exp(-m / B.monsterDefK[i]));
+    const base = B.monsterDefCap[i] * (1 - Math.exp(-m / B.monsterDefK[i]));
+    const deep = B.monsterDeepMit[G.clamp(i, 0, B.monsterDeepMit.length - 1)];
+    const fl = (floor == null) ? G.mlvlToFloor(m, i) : floor;
+    const a = B.monsterDeepFrom, b = Math.max(a + 1, B.monsterDeepTo);
+    const t = G.clamp((fl - a) / (b - a), 0, 1);
+    const s = t * t * (3 - 2 * t);            // smoothstep：60 层前不生效，之后平滑爬升
+    return base * (1 - s) + deep * s;
   };
   // 目标减伤 → 抗性数值（喂给 S.resistMitigation）
-  G.monsterResist = function (mlvl, diffIdx) {
-    const mit = G.monsterDefMit(mlvl, diffIdx);
+  G.monsterResist = function (mlvl, diffIdx, floor) {
+    const mit = G.monsterDefMit(mlvl, diffIdx, floor);
     if (mit <= 0.002) return 0;
     return Math.round(150 * mit / (1 - mit));
   };
-  G.monsterResists = function (mlvl, diffIdx) {
-    const v = G.monsterResist(mlvl, diffIdx);
+  G.monsterResists = function (mlvl, diffIdx, floor) {
+    const v = G.monsterResist(mlvl, diffIdx, floor);
     return { fire: v, cold: v, lightning: v, poison: v };
   };
   // 目标减伤 → 护甲整体缩放系数（数值解：让「各怪护甲减伤的平均值」正好等于目标减伤）
-  G.monsterArmorScale = function (mlvl, diffIdx) {
-    const m = G.monsterDefMit(mlvl, diffIdx);
+  G.monsterArmorScale = function (mlvl, diffIdx, floor) {
+    const m = G.monsterDefMit(mlvl, diffIdx, floor);
     const lv = Math.max(1, mlvl || 1);
     if (m <= 0.003) return 1;
     const bases = G.MONSTER_ARMORS && G.MONSTER_ARMORS.length ? G.MONSTER_ARMORS : [8];
     const C = 55 + 15 * lv;
     const g = Math.pow(1.06, lv);
-    let lo = 0, hi = 8;
-    for (let it = 0; it < 26; it++) {
+    let lo = 0, hi = 60;
+    for (let it = 0; it < 30; it++) {
       const k = (lo + hi) / 2;
       let sum = 0;
       for (let i = 0; i < bases.length; i++) {
@@ -84,8 +101,8 @@
     }
     return (lo + hi) / 2;
   };
-  G.monsterArmor = function (baseArmor, mlvl, diffIdx) {
-    return Math.max(0, Math.round(baseArmor * Math.pow(1.06, mlvl) * G.monsterArmorScale(mlvl, diffIdx)));
+  G.monsterArmor = function (baseArmor, mlvl, diffIdx, floor) {
+    return Math.max(0, Math.round(baseArmor * Math.pow(1.06, mlvl) * G.monsterArmorScale(mlvl, diffIdx, floor)));
   };
 
   // 击杀经验

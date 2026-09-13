@@ -279,6 +279,10 @@
   UI.showTooltip = function (html, ev, above) {
     const tp = el('tooltip');
     if (!tp || !html) return;
+    /* 装备对比用的是 #tooltip.wide（外框透明，暗色底在内层 .tcol 上）。
+     * 这里必须把类清掉，否则看过一次装备对比之后，技能 / 天赋 / 宝石这些
+     * 普通提示框会继承 wide，暗色底、边框、阴影一起消失（看起来像透明了）。 */
+    if (tp.className) tp.className = '';
     tp.innerHTML = html;
     tp.hidden = false;
     const w = tp.offsetWidth || 330, h = tp.offsetHeight || 240;

@@ -1995,6 +1995,13 @@ section('16f. 词缀前后缀标识 / 悬停看当前装备 / 宝石拿起镶嵌
     '评分结论位于该窗口底部（其后不再有属性行）');
   G.UI.hideTooltip();
 
+  /* 看过对比之后，普通提示框（技能 / 天赋 / 坚韧 / 宝石…）必须恢复自带的暗色底：
+   * #tooltip.wide 是「外框透明、暗色底画在两侧窗口上」，漏清掉整个提示框就会变透明 */
+  G.UI.showTooltip('<div class="tname">钢铁体魄</div>', { clientX: 40, clientY: 40 });
+  ok(tp.className === '', '对比之后再看法术 / 天赋说明，提示框会清掉 wide 恢复暗色底', tp.className);
+  ok(tp.innerHTML.indexOf('class="tcol ') < 0, '普通提示框里不再残留对比窗口的骨架');
+  G.UI.hideTooltip();
+
   // 悬停身上这件装备时退化为单窗口
   G.UI.tooltip(wornHelm, { clientX: 40, clientY: 40 }, { compare: true });
   ok(tp.className === '' && tp.innerHTML.indexOf('class="twin"') < 0, '悬停已穿戴装备时不显示对比窗口');

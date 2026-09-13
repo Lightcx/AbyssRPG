@@ -4648,6 +4648,9 @@ section('22. 一键卖/分解 · 背包扩容 · 过滤器改版 · 训练场 ·
   G.UI.refreshInventory();
   ok(G.el('inv-grid').children.length === 70 && G.el('inv-cap').textContent === '背包 70 格',
     '背包格子与容量提示同步', G.el('inv-grid').children.length);
+  p.inventory[5] = mkE('common', 20);
+  G.UI.sortInventory();
+  ok(p.inventory.length === 70, '整理背包不会把仓库扩容换来的格子吃掉', p.inventory.length);
   p.town.buildings.vault = 1;
   p.inventory = new Array(60).fill(null);
 

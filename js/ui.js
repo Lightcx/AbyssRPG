@@ -1499,7 +1499,10 @@
       // 3) 再按物品等级
       return (b.ilvl || 0) - (a.ilvl || 0);
     });
-    p.inventory = items.concat(new Array(Math.max(0, 60 - items.length)).fill(null));
+    /* 空位补到当前容量：容量由仓库等级决定（1 级 60 格，每级 +5），
+     * 以前这里写死 60，整理一次就会把仓库升级换来的格子吃掉 */
+    const cap = Math.max(p.inventory.length, (G.Town && G.Town.bagCap) ? G.Town.bagCap(p) : 60);
+    p.inventory = items.concat(new Array(Math.max(0, cap - items.length)).fill(null));
     UI.dirty.inv = true;
     UI.refreshInventory();
     G.audio.play('ui');

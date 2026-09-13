@@ -282,6 +282,8 @@
       if (!mo.def) return null;
       mo.dots = mo.dots || [];
       if (mo.slow === undefined) mo.slow = null;
+      // 抗性是按怪物等级 / 难度算出来的，老缓存里没有 → 这里补上
+      mo.res = G.monsterResists(mo.mlvl || this.mlvl, this.diffIdx);
       return mo;
     }).filter(Boolean);
     this.props = (cache.props || []).map((pr) => ({

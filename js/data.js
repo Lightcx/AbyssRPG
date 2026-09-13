@@ -34,6 +34,60 @@
     const add = (D.DIFFICULTIES[G.clamp(diffIdx | 0, 0, D.DIFFICULTIES.length - 1)] || {}).mlvlAdd || 0;
     return Math.max(1, Math.round(1 + floor * 1.2 + add));
   };
+  /* ---------------- 怪物防御成长（物理 / 元素同一条目标曲线） ----------------
+   * 目标减伤： mit(mlvl) = 上限(难度) × (1 - e^(-mlvl/K(难度)))
+   *   · 平滑、单调，随深渊层数上升；难度越高上限越高、K 越小（爬得更快 ⇒ 曲线更陡）
+   *   · 1~10 层只有几个百分点，前期手感不变
+   * 两条通道都对齐这条曲线，所以物理与元素的等效输出基本一致：
+   *   · 元素抗性数值 = resistMitigation 的反函数（数值 = 150 × mit / (1 - mit)）
+   *   · 护甲整体缩放 = 「达到该减伤所需的护甲」÷「各怪基础护甲的参考值 × 1.06^mlvl」
+   *     （每只怪按自己的基础护甲上下浮动，厚甲的更抗物理、脆皮的更怕物理）
+   * 目标值：80 层（mlvl 97~102）平均减伤约 19.5% / 28% / 37% / 46% / 54% / 62%
+   */
+  G.BALANCE.monsterDefCap = [0.30, 0.40, 0.50, 0.58, 0.65, 0.72];
+  G.BALANCE.monsterDefK = [70, 62, 55, 48, 42, 36];
+  G.MONSTER_AVG_ARMOR = 18;          // 各怪基础护甲的参考均值（用于把护甲整体对齐到目标减伤）
+
+  G.monsterDefMit = function (mlvl, diffIdx) {
+    const B = G.BALANCE;
+    const i = G.clamp(diffIdx | 0, 0, B.monsterDefCap.length - 1);
+    const m = Math.max(0, mlvl || 1);
+    return B.monsterDefCap[i] * (1 - Math.exp(-m / B.monsterDefK[i]));
+  };
+  // 目标减伤 → 抗性数值（喂给 S.resistMitigation）
+  G.monsterResist = function (mlvl, diffIdx) {
+    const mit = G.monsterDefMit(mlvl, diffIdx);
+    if (mit <= 0.002) return 0;
+    return Math.round(150 * mit / (1 - mit));
+  };
+  G.monsterResists = function (mlvl, diffIdx) {
+    const v = G.monsterResist(mlvl, diffIdx);
+    return { fire: v, cold: v, lightning: v, poison: v };
+  };
+  // 目标减伤 → 护甲整体缩放系数（数值解：让「各怪护甲减伤的平均值」正好等于目标减伤）
+  G.monsterArmorScale = function (mlvl, diffIdx) {
+    const m = G.monsterDefMit(mlvl, diffIdx);
+    const lv = Math.max(1, mlvl || 1);
+    if (m <= 0.003) return 1;
+    const bases = G.MONSTER_ARMORS && G.MONSTER_ARMORS.length ? G.MONSTER_ARMORS : [8];
+    const C = 55 + 15 * lv;
+    const g = Math.pow(1.06, lv);
+    let lo = 0, hi = 8;
+    for (let it = 0; it < 26; it++) {
+      const k = (lo + hi) / 2;
+      let sum = 0;
+      for (let i = 0; i < bases.length; i++) {
+        const a = bases[i] * g * k;
+        sum += a / (a + C);
+      }
+      if (sum / bases.length < m) lo = k; else hi = k;
+    }
+    return (lo + hi) / 2;
+  };
+  G.monsterArmor = function (baseArmor, mlvl, diffIdx) {
+    return Math.max(0, Math.round(baseArmor * Math.pow(1.06, mlvl) * G.monsterArmorScale(mlvl, diffIdx)));
+  };
+
   // 击杀经验
   G.xpForMonster = function (mlvl, kind, diffIdx) {
     const B = G.BALANCE;
@@ -427,11 +481,11 @@
 
   /* ---------------- 怪物 ---------------- */
   const MONSTERS = [
-    { id: 'imp', name: '沉沦魔', kind: 'melee', shape: 'imp', color: '#7fbf5a', size: 12, life: 12, dmg: 26, armor: 0, speed: 108, range: 26, cd: 0.85, xp: 9, minFloor: 1, weight: 12 },
+    { id: 'imp', name: '沉沦魔', kind: 'melee', shape: 'imp', color: '#7fbf5a', size: 12, life: 12, dmg: 26, armor: 5, speed: 108, range: 26, cd: 0.85, xp: 9, minFloor: 1, weight: 12 },
     { id: 'skeleton', name: '骷髅战士', kind: 'melee', shape: 'skel', color: '#d8d4c4', size: 14, life: 18, dmg: 35, armor: 8, speed: 82, range: 30, cd: 1.0, xp: 12, minFloor: 1, weight: 12 },
     { id: 'archer', name: '骷髅弓手', kind: 'ranged', shape: 'skel', color: '#c9c2a4', size: 13, life: 15, dmg: 31, armor: 4, speed: 76, range: 340, cd: 1.6, xp: 13, minFloor: 1, weight: 10, proj: { speed: 330, color: '#e8e0c0', size: 4 } },
     { id: 'zombie', name: '腐尸', kind: 'melee', shape: 'zombie', color: '#7a9350', size: 17, life: 36, dmg: 53, armor: 14, speed: 58, range: 32, cd: 1.5, xp: 16, minFloor: 2, weight: 10 },
-    { id: 'bat', name: '血蝠', kind: 'melee', shape: 'bat', color: '#b0455a', size: 11, life: 11, dmg: 29, armor: 0, speed: 132, range: 24, cd: 0.7, xp: 11, minFloor: 2, weight: 9, erratic: true },
+    { id: 'bat', name: '血蝠', kind: 'melee', shape: 'bat', color: '#b0455a', size: 11, life: 11, dmg: 29, armor: 6, speed: 132, range: 24, cd: 0.7, xp: 11, minFloor: 2, weight: 9, erratic: true },
     { id: 'spider', name: '深渊蛛', kind: 'ranged', shape: 'spider', color: '#8a6bd0', size: 13, life: 20, dmg: 29, armor: 6, speed: 92, range: 260, cd: 1.4, xp: 15, minFloor: 3, weight: 9, proj: { speed: 260, color: '#8ce07a', size: 5, elem: 'poison', dot: 0.5 } },
     { id: 'hound', name: '地狱犬', kind: 'charger', shape: 'hound', color: '#c9752f', size: 15, life: 27, dmg: 66, armor: 8, speed: 96, range: 30, cd: 1.2, xp: 20, minFloor: 4, weight: 9, charge: { speed: 430, cd: 3.2, dmg: 1.5 } },
     { id: 'wraith', name: '幽魂', kind: 'caster', shape: 'wraith', color: '#6fc8d8', size: 15, life: 22, dmg: 57, armor: 2, speed: 74, range: 300, cd: 2.0, xp: 22, minFloor: 5, weight: 8, ghost: true, proj: { speed: 230, color: '#6fc8d8', size: 7, elem: 'cold', homing: 1.4 } },
@@ -442,11 +496,13 @@
     { id: 'lich', name: '巫妖', kind: 'caster', shape: 'wraith', color: '#b06fd8', size: 17, life: 78, dmg: 101, armor: 20, speed: 68, range: 320, cd: 2.2, xp: 46, minFloor: 11, weight: 6, summon: 'skeleton', summonCd: 6.5, proj: { speed: 300, color: '#b06fd8', size: 8, homing: 1.1 } },
     { id: 'slasher', name: '裂魂者', kind: 'melee', shape: 'demon', color: '#d1476a', size: 18, life: 62, dmg: 119, armor: 22, speed: 104, range: 34, cd: 1.1, xp: 38, minFloor: 10, weight: 8 },
     /* 训练场的假人：不会动、不会打人、打不死，只用来测伤害（weight 0 = 不会随机刷出来） */
-    { id: 'dummy', name: '训练假人', kind: 'dummy', shape: 'dummy', color: '#b79b6a', size: 16, life: 40, dmg: 0, armor: 0, speed: 0, range: 0, cd: 99, xp: 0, minFloor: 1, weight: 0, dummy: true },
-    { id: 'dummy_boss', name: '训练用恶魔像', kind: 'dummy', shape: 'dummy_boss', color: '#d1476a', size: 26, life: 40, dmg: 0, armor: 0, speed: 0, range: 0, cd: 99, xp: 0, minFloor: 1, weight: 0, dummy: true, isBossDummy: true },
+    { id: 'dummy', name: '训练假人', kind: 'dummy', shape: 'dummy', color: '#b79b6a', size: 16, life: 40, dmg: 0, armor: 8, speed: 0, range: 0, cd: 99, xp: 0, minFloor: 1, weight: 0, dummy: true },
+    { id: 'dummy_boss', name: '训练用恶魔像', kind: 'dummy', shape: 'dummy_boss', color: '#d1476a', size: 26, life: 40, dmg: 0, armor: 30, speed: 0, range: 0, cd: 99, xp: 0, minFloor: 1, weight: 0, dummy: true, isBossDummy: true },
   ];
   D.MONSTERS = MONSTERS;
   D.monsterById = {}; MONSTERS.forEach((m) => { D.monsterById[m.id] = m; });
+  // 各怪基础护甲（训练假人除外）：护甲整体缩放要按它们的平均值对齐目标减伤
+  G.MONSTER_ARMORS = MONSTERS.filter((m) => !m.dummy).map((m) => m.armor || 0);
   D.monstersForFloor = function (floor) {
     return MONSTERS.filter((m) => !m.dummy && m.minFloor <= floor + 1);
   };

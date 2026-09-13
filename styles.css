@@ -222,6 +222,9 @@ b{color:#f0e2c0;font-weight:600}
   box-shadow:inset 0 0 0 1px rgba(255,80,80,.85),0 0 7px rgba(190,40,40,.35);
 }
 .inv-foot{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px}
+/* 商人的批量卖出按钮：和铁匠铺一样排成一行，文字不折行（窄窗口横向滚动） */
+.inv-foot.sell-btns{flex-wrap:nowrap;overflow-x:auto}
+.inv-foot.sell-btns .btn{flex:none;white-space:nowrap}
 .inv-foot b{color:#ffe9a8}
 .btn{
   background:linear-gradient(180deg,#2c2419,#1a140f);border:1px solid #4a3c2a;color:#cbb894;border-radius:3px;

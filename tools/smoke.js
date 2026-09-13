@@ -4800,7 +4800,14 @@ section('22. 一键卖/分解 · 背包扩容 · 过滤器改版 · 训练场 ·
     '确认框居中且盖在面板之上', cfCss.slice(0, 56));
   const trAt = css.indexOf('#panel-training{');
   ok(trAt > 0 && css.slice(trAt, trAt + 120).indexOf('translate(-50%,-50%)') >= 0, '训练场面板居中');
-  ok(html.indexOf('一键卖出白装') >= 0 && html.indexOf('一键卖出魔法及以下') >= 0, '商人面板有白装 / 魔法及以下按钮');
+  ok(html.indexOf('卖出白装') >= 0 && html.indexOf('卖出魔法及以下') >= 0 && html.indexOf('一键卖出所有装备') >= 0,
+    '商人面板有白装 / 魔法及以下 / 所有装备三个按钮');
+  const sellBtns = html.slice(html.indexOf('<footer class="inv-foot sell-btns">'), html.indexOf('</footer>', html.indexOf('inv-foot sell-btns')));
+  ok(sellBtns.indexOf('btn-sell-junk') < sellBtns.indexOf('btn-sell-magic') &&
+    sellBtns.indexOf('btn-sell-magic') < sellBtns.indexOf('btn-sell-all'),
+    '按钮顺序：白装 → 魔法及以下 → 所有装备');
+  ok(/\.inv-foot\.sell-btns\{[^}]*flex-wrap:nowrap/.test(css) &&
+    /\.inv-foot\.sell-btns \.btn\{[^}]*white-space:nowrap/.test(css), '卖出按钮排成一行且文字不折行');
 
   p.inventory = new Array(60).fill(null);
   for (let i = 0; i < 3; i++) p.inventory[i] = mkE('common', 20);
@@ -4820,7 +4827,7 @@ section('22. 一键卖/分解 · 背包扩容 · 过滤器改版 · 训练场 ·
   p.inventory[7] = mkE('magic', 26);
   p.inventory[8] = gemItem('magic');
   G.UI.sellJunkRarities(['common'], false);
-  ok(p.inventory[6] === null && p.inventory[7] && p.inventory[8], '「一键卖出白装」只卖白装，宝石件留下');
+  ok(p.inventory[6] === null && p.inventory[7] && p.inventory[8], '「卖出白装」只卖白装，宝石件留下');
   G.UI.sellJunkRarities(['common', 'magic'], true);
   ok(p.inventory[7] === null && p.inventory[8] && p.gold > 0, '「魔法及以下」卖掉比身上差的，保留镶宝石的');
   G.UI.togglePanel('panel-vendor', false);

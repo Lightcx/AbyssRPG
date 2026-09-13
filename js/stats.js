@@ -299,7 +299,8 @@
     };
     RES_KEYS.forEach((k) => {
       const val = (raw[RES_STAT[k]] || 0) + raw.allResist - diff.resistPen;
-      st.res[k] = G.clamp(val, -100, 400);
+      // 只保留下限（负抗 = 多挨打），上限不夹：堆得多高就减多少，曲线本身会递减
+      st.res[k] = Math.max(-100, isFinite(val) ? val : 0);
     });    // 武器
     const w = player.gear && player.gear.weapon;
     if (w) {
@@ -351,10 +352,13 @@
     return mods.aps ? base / (1 + mods.aps / 100) : base;
   };
 
-  /* ---------------- 抗性与护甲减伤 ---------------- */
+  /* ---------------- 抗性与护甲减伤 ----------------
+   * 元素减伤 = res / (res + 150)，递减曲线，硬上限 99%
+   * （75% 需要 450 点、90% 需要 1350 点、95% 需要 2850 点 —— 越高越吃投入）
+   * 负抗性 = 额外受伤，最多多挨 66.7%（数值下限 -100） */
   S.resistMitigation = (resVal) => {
     const r = Math.max(-100, resVal);
-    if (r >= 0) return Math.min(0.75, r / (r + 150));
+    if (r >= 0) return Math.min(0.99, r / (r + 150));
     return -Math.min(1.5, -r / 150); // 负抗性 = 额外受伤
   };
   S.armorMitigation = (armor, attackerLevel) => {
@@ -382,7 +386,7 @@
     let sum = 0;
     S.TOUGH_TYPES.forEach((k) => {
       const mit = k === 'physical' ? armorMit : S.resistMitigation(st.res[k] || 0);
-      const t = life / Math.max(0.05, 1 - mit) / Math.max(0.05, 1 - dodge) / Math.max(0.05, 1 - reduce);
+      const t = life / Math.max(0.01, 1 - mit) / Math.max(0.05, 1 - dodge) / Math.max(0.05, 1 - reduce);
       byType[k] = t;
       sum += t;
     });

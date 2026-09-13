@@ -855,9 +855,11 @@
   };
 
   UI.closeAffixPick = function () {
-    UI.affixTarget = null;
     const box = el('affix-pick');
-    if (box) box.hidden = true;
+    if (!box || box.hidden) { UI.affixTarget = null; return false; }
+    UI.affixTarget = null;
+    box.hidden = true;
+    return true;
   };
 
   UI.toggleAffix = function (id, on) {
@@ -2410,9 +2412,13 @@
     if (cok) cok.addEventListener('click', () => UI.confirmResolve(true));
     const cno = el('btn-confirm-cancel');
     if (cno) cno.addEventListener('click', () => UI.confirmResolve(false));
-    /* 商人的「一键卖出所有装备」 */
+    /* 商人的一键卖出：全部 / 只白装 / 魔法及以下 */
     const sall = el('btn-sell-all');
     if (sall) sall.addEventListener('click', UI.sellAllEquip);
+    const sjunk = el('btn-sell-junk');
+    if (sjunk) sjunk.addEventListener('click', () => UI.sellJunkRarities(['common'], false));
+    const smagic = el('btn-sell-magic');
+    if (smagic) smagic.addEventListener('click', () => UI.sellJunkRarities(['common', 'magic'], true));
     const menu = el('panel-menu');
     if (menu) menu.hidden = true;
     const br = el('btn-resume');
@@ -2463,14 +2469,17 @@
     }
     ['panel-inventory', 'panel-character', 'panel-vendor', 'panel-help',
       'panel-craft', 'panel-stash', 'panel-blacksmith', 'panel-town', 'panel-jeweler', 'panel-rift',
-      'panel-respec', 'panel-skill', 'panel-filter', 'panel-settings', 'panel-confirm', 'panel-training'].forEach((x) => {
+      'panel-respec', 'panel-skill', 'panel-filter', 'panel-settings', 'panel-training'].forEach((x) => {
       const n = el(x);
       if (n && x !== id) n.hidden = true;
     });
     pnl.hidden = !show;
     UI.open = show ? id : null;
-    // 确认框被关掉（✕ / Esc / 切面板）＝ 取消，别把回调留着下次误触发
-    if (id === 'panel-confirm' && !show) UI._confirmCb = null;
+    // 关掉任何一个面板时顺手收起确认框（＝取消）；确认框自己不走 togglePanel
+    if (!show) {
+      UI.closeConfirm();
+      if (id === 'panel-confirm') UI._confirmCb = null;   // 万一有人直接 toggle 它
+    }
     // 过滤器面板一关，导入 / 导出小窗也跟着关
     if (id === 'panel-filter' && !show) { UI.closeFilterIO(); UI.closeAffixPick(); }
     // 锚点：只有从 NPC / 深渊之门打开的窗口才会因走远而自动关闭
@@ -3079,13 +3088,30 @@
     if (x) x.textContent = opts.text || '';
     const ok = el('btn-confirm-ok');
     if (ok) ok.textContent = opts.okText || '确认';
-    UI.togglePanel('panel-confirm', true);
+    /* 直接盖在当前面板上：不走 togglePanel，所以原先打开的铁匠铺 / 商人界面会留着 */
+    const box = el('panel-confirm');
+    if (box) box.hidden = false;
+  };
+
+  UI.confirmVisible = function () {
+    const box = el('panel-confirm');
+    return !!box && box.hidden === false;
+  };
+
+  // 关掉确认框＝取消；返回 true 表示确实关掉了（给 Esc 用）
+  UI.closeConfirm = function () {
+    const box = el('panel-confirm');
+    if (!box || box.hidden) return false;
+    box.hidden = true;
+    UI._confirmCb = null;
+    return true;
   };
 
   UI.confirmResolve = function (yes) {
     const cb = yes ? UI._confirmCb : null;
     UI._confirmCb = null;
-    UI.togglePanel('panel-confirm', false);
+    const box = el('panel-confirm');
+    if (box) box.hidden = true;
     if (typeof cb === 'function') cb();
   };
 
@@ -3131,6 +3157,37 @@
       okText: '卖出 ' + s.list.length + ' 件',
       onOk: UI.sellAllEquipRun,
     });
+  };
+
+  /* 白装 / 魔法及以下的批量卖出（商人面板上的两个按钮）：
+   * 跳过镶着宝石的；「魔法及以下」还会保留比身上更好的那件 */
+  UI.sellJunkRarities = function (rarities, keepBetter) {
+    const p = UI.game.player;
+    let gold = 0, n = 0, gem = 0;
+    p.inventory.forEach((it, i) => {
+      if (!it || it.cat !== 'equip') return;
+      if (rarities.indexOf(it.rarity) < 0) return;
+      if (UI.hasGem(it)) { gem++; return; }
+      if (keepBetter) {
+        let slot = it.slot;
+        if (slot === 'ring') slot = p.gear.ring1 ? 'ring1' : 'ring2';
+        const cur = p.gear[slot];
+        if (cur && L.score(it, p.stats) > L.score(cur, p.stats)) return;
+      }
+      gold += L.price(it);
+      p.inventory[i] = null;
+      n++;
+    });
+    p.gold += gold;
+    if (n) {
+      G.audio.play('gold');
+      G.log('一键卖出 ' + n + ' 件装备，获得 ' + gold + ' 金币' + (gem ? '（跳过 ' + gem + ' 件镶着宝石的）' : '') + '。', 'dim');
+    } else {
+      G.log('没有可以出售的装备。', 'dim');
+    }
+    UI.dirty.inv = true; UI.dirty.vendor = true; UI.dirty.bs = true;
+    UI.refreshInventory();
+    if (UI.open === 'panel-vendor') UI.renderVendor();
   };
 
   UI.sellAllEquipRun = function () {

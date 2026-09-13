@@ -4678,7 +4678,7 @@ section('22. 一键卖/分解 · 背包扩容 · 过滤器改版 · 训练场 ·
   const shards1 = p.shards, gold1 = p.gold;
   G.UI.salvageAt(10);
   ok(p.inventory[10] && p.shards === shards1 && G.el('panel-confirm').hidden === false, '点分解镶宝石装备先问一次');
-  G.UI.togglePanel('panel-confirm', false);
+  G.UI.closeConfirm();
   ok(p.inventory[10] && G.UI._confirmCb === null, '取消后装备还在、回调不残留');
   G.UI.sellInv(10);
   ok(p.inventory[10] && p.gold === gold1, '点卖镶宝石装备也先问一次');
@@ -4783,6 +4783,49 @@ section('22. 一键卖/分解 · 背包扩容 · 过滤器改版 · 训练场 ·
   ok(slowBasic > fastBasic * 1.4, '普通攻击仍是慢武器单发更高', slowBasic.toFixed(1) + ' / ' + fastBasic.toFixed(1));
   ok(G.BALANCE.skillRefAps === 1.16, '基准攻速写在 G.BALANCE 里（可调）');
   p.gear.weapon = null; G.Stats.derive(p);
+  /* ---- 界面细节：分解按钮排成一行 / 弹窗居中 / 确认框不关原界面 / 商人批量卖 ---- */
+  const bsAt = html.indexOf('<div class="bs-btns">');
+  const bsRow = bsAt < 0 ? '' : html.slice(bsAt, html.indexOf('</div>', bsAt));
+  ok(bsAt > 0 && (bsRow.match(/<button/g) || []).length === 4, '四个分解按钮在同一个按钮行里',
+    (bsRow.match(/<button/g) || []).length + ' 个');
+  ok(html.slice(html.indexOf('<div class="bs-head">'), bsAt).indexOf('<button') < 0, '信息行里不再混按钮');
+  const bsCss = css.slice(css.indexOf('.bs-btns{'), css.indexOf('.bs-btns{') + 180);
+  ok(bsCss.indexOf('flex-wrap:nowrap') >= 0 && bsCss.indexOf('overflow-x:auto') >= 0, '按钮行不换行（窄窗口横向滚动）');
+  const cfAt = css.indexOf('#panel-confirm{');
+  const cfCss = cfAt < 0 ? '' : css.slice(cfAt, cfAt + 220);
+  ok(cfCss.indexOf('left:50%') >= 0 && cfCss.indexOf('translate(-50%,-50%)') >= 0 && cfCss.indexOf('z-index:70') >= 0,
+    '确认框居中且盖在面板之上', cfCss.slice(0, 56));
+  const trAt = css.indexOf('#panel-training{');
+  ok(trAt > 0 && css.slice(trAt, trAt + 120).indexOf('translate(-50%,-50%)') >= 0, '训练场面板居中');
+  ok(html.indexOf('一键卖出白装') >= 0 && html.indexOf('一键卖出魔法及以下') >= 0, '商人面板有白装 / 魔法及以下按钮');
+
+  p.inventory = new Array(60).fill(null);
+  for (let i = 0; i < 3; i++) p.inventory[i] = mkE('common', 20);
+  p.inventory[3] = mkE('magic', 25);
+  p.inventory[4] = mkE('rare', 30);
+  p.inventory[5] = gemItem('magic');
+  p.gear.helm = G.Loot.makeItem(tb.rng, { ilvl: 70, slot: 'helm', rarity: 'rare' });
+  G.Stats.derive(p);
+  G.UI.togglePanel('panel-vendor', true);
+  G.UI.sellAllEquip();
+  ok(G.el('panel-confirm').hidden === false && G.UI.open === 'panel-vendor' && G.el('panel-vendor').hidden === false,
+    '一键卖出的确认框不会把商人界面关掉', G.UI.open);
+  G.UI.confirmResolve(true);
+  ok(G.UI.open === 'panel-vendor' && G.el('panel-vendor').hidden === false, '确认之后商人界面依旧开着');
+  p.gold = 0;
+  p.inventory[6] = mkE('common', 22);
+  p.inventory[7] = mkE('magic', 26);
+  p.inventory[8] = gemItem('magic');
+  G.UI.sellJunkRarities(['common'], false);
+  ok(p.inventory[6] === null && p.inventory[7] && p.inventory[8], '「一键卖出白装」只卖白装，宝石件留下');
+  G.UI.sellJunkRarities(['common', 'magic'], true);
+  ok(p.inventory[7] === null && p.inventory[8] && p.gold > 0, '「魔法及以下」卖掉比身上差的，保留镶宝石的');
+  G.UI.togglePanel('panel-vendor', false);
+  ok(G.el('panel-confirm').hidden === true, '关掉商人界面时确认框一并收起');
+  F.data.rules = [{ action: 'hide', enabled: true, conds: [{ type: 'affix', op: 'has', value: 1, affixIds: [] }] }];
+  G.UI.openAffixPick(0, 0);
+  ok(G.UI.closeAffixPick() === true && G.UI.closeAffixPick() === false, '词缀面板的关闭函数返回 true / 重复关闭返回 false');
+
   report('一键卖/分解、背包扩容、过滤器改版、训练场、攻速归一均已覆盖');
 }
 

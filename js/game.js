@@ -790,6 +790,8 @@
     if (inp.pressed('Escape')) {
       if (G.UI.heldGem) G.UI.releaseGem();
       else if (G.UI.heldOrb) G.UI.releaseOrb();
+      else if (G.UI.closeConfirm()) { /* 先关掉确认框：底下的铁匠铺 / 商人界面留着 */ }
+      else if (G.UI.closeAffixPick()) { /* 词缀勾选面板同理 */ }
       else if (G.UI.closeFilterIO()) { /* 先关掉过滤器面板里的导入 / 导出小窗 */ }
       else if (G.UI.open) G.UI.togglePanel(G.UI.open, false);
       else G.UI.setPaused(!this.paused);

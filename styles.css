@@ -725,8 +725,11 @@ b{color:#f0e2c0;font-weight:600}
 
 /* ================= 铁匠铺 / 分解 ================= */
 #panel-blacksmith{left:50%;top:50%;transform:translate(-50%,-50%);width:660px;max-width:96vw}
-.bs-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;font-size:12px}
+.bs-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px;font-size:12px}
 .bs-head b{color:#9fe8ff}
+/* 分解按钮固定排成一排（窄窗口时横向滚动，不再被挤到第二行） */
+.bs-btns{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;overflow-x:auto;margin-bottom:10px}
+.bs-btns .btn{flex:none;white-space:nowrap}
 
 /* ================= 宝石格子（背包内按品质区分底色） ================= */
 .cell.gem-cat{background:linear-gradient(180deg,#1a1a26,#0b0b12)}
@@ -926,6 +929,16 @@ b{color:#f0e2c0;font-weight:600}
   position:absolute;inset:0;z-index:99;background:#150707;color:#ffb3ae;padding:24px;font:12px/1.6 monospace;
   white-space:pre-wrap;overflow:auto;
 }
+
+/* 训练场（戈登）与通用确认框：都摆在屏幕正中 */
+#panel-training{left:50%;top:50%;transform:translate(-50%,-50%);width:520px;max-width:96vw}
+#panel-confirm{
+  left:50%;top:50%;transform:translate(-50%,-50%);width:430px;max-width:94vw;
+  text-align:center;z-index:70;
+}
+#panel-confirm .menu-body{padding:16px 18px}
+#panel-confirm #confirm-text{line-height:1.8;margin:0 0 14px;color:#d8c79f}
+#panel-confirm .menu-btns{flex-direction:row;justify-content:center;gap:12px}
 
 /* 训练场 DPS 面板（只在训练场显示） */
 #dps-box{

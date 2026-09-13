@@ -148,10 +148,6 @@
         }
       }
       if (!opts.noPowers) C.triggerPowers(game, 'onHit', m, { total, crit, skill: opts.skill, elem: opts.elem });
-      // 精英怪「尖刺」词缀反弹
-      if (m.thornsPct && !opts.reflect) {
-        C.hitPlayer(game, { physical: total * m.thornsPct / 100 }, { reflect: true });
-      }
     }
     if (m.life <= 0) {
       C.killMonster(game, m, fromPlayer);

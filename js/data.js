@@ -546,7 +546,6 @@
     { id: 'explosive', name: '爆裂', text: '死亡时爆炸，造成范围伤害', deathNova: { elem: 'physical', mult: 2.0, radius: 130 } },
     { id: 'aura_rage', name: '狂暴光环', text: '附近怪物伤害 +30%', aura: { kind: 'rage', radius: 220, dmg: 1.3 } },
     { id: 'aura_heal', name: '再生光环', text: '附近怪物持续回复生命', aura: { kind: 'heal', radius: 220, hps: 0.05 } },
-    { id: 'thorns', name: '尖刺', text: '反弹 40% 近战伤害', stats: { thornsPct: 40 } },
   ];
   D.eliteAffixById = {}; D.ELITE_AFFIXES.forEach((a) => { D.eliteAffixById[a.id] = a; });
 

@@ -502,7 +502,6 @@
         if (a.mod && a.mod.armor) m.armor *= a.mod.armor;
         if (a.stats && a.stats.moveSpeed) m.speed *= 1 + a.stats.moveSpeed / 100;
         if (a.stats && a.stats.dodge) m.dodgeChance = a.stats.dodge;
-        if (a.stats && a.stats.thornsPct) m.thornsPct = a.stats.thornsPct;
         if (a.onHitElem) m.onHitElem = a.onHitElem;
         if (a.deathNova) m.deathNova = a.deathNova;
         if (a.lifesteal) m.lifesteal = a.lifesteal;

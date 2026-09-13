@@ -88,6 +88,8 @@
     dmgReduce: { name: '受到伤害降低', kind: 'pct' },
     allSkills: { name: '所有技能等级', kind: 'flat' },
     dodge: { name: '闪避几率', kind: 'pct' },
+    dodgeCharges: { name: '闪避充能次数', kind: 'flat' },
+    dodgeRecharge: { name: '闪避恢复时间', kind: 'pct' },
   };
   D.STATS = STATS;
 
@@ -99,6 +101,8 @@
       const sk = D.SKILLS[key.slice(6)];
       return '+' + v + ' ' + (sk ? sk.name : key.slice(6)) + ' 技能等级';
     }
+    if (key === 'dodgeCharges') return '闪避充能 +' + Math.round(v) + ' 次';
+    if (key === 'dodgeRecharge') return '闪避恢复时间 -' + v + '%';
     if (def && def.kind === 'pct') return '+' + v + '% ' + def.name;
     if (key === 'thorns') return '攻击者受到 ' + Math.round(v) + ' 点伤害';
     if (key === 'lifeSteal') return '生命偷取 ' + v + '%';
@@ -223,12 +227,16 @@
     return out.length ? out : BASES.filter((b) => b.slot === slot);
   };
   D.WEAPON_TYPES = WEAPON_TYPES;
+  D.OFFHAND_TYPES = OFFHAND_TYPES;
+  D.ARMOR_TYPES = ARMOR_TYPES;
   D.TIER_NAMES = TIER_NAMES;
 
   /* ---------------- 词缀 ---------------- */
   // v: 8 个等级段的数值，掷取范围 [0.72v, v]
   function affix(id, kind, name, stat, v, group, extra) {
-    const tiers = v.map((val, i) => ({ ilvl: D.TIER_ILVL[i], min: Math.round(val * 0.72 * 10) / 10, max: val }));
+    // spread：数值下限的比例，默认 0.72；取整后必须稳定的词缀（如充能次数）可以收窄
+    const spread = (extra && extra.spread) || 0.72;
+    const tiers = v.map((val, i) => ({ ilvl: D.TIER_ILVL[i], min: Math.round(val * spread * 10) / 10, max: val }));
     return Object.assign({ id, kind, name, stat, tiers, group: group || stat }, extra || {});
   }
   /* 装备部位分组：
@@ -289,6 +297,9 @@
     affix('s_areaDmg', 'suffix', '波及之', 'areaDmg', [6, 10, 15, 21, 28, 36, 45, 56]),
     affix('s_dodge', 'suffix', '幻影之', 'dodge', [2, 3, 4, 5, 6, 7, 8, 9], null, { slots: ['boots', 'chest', 'belt', 'helm'] }),
     affix('s_pickup', 'suffix', '磁力之', 'pickup', [14, 22, 32, 44, 58, 74, 92, 112]),
+    /* 闪避充能：只出现在鞋子上（戒指不吃这条），spread 收窄保证取整后数值稳定 */
+    affix('s_dodgeCharges', 'suffix', '疾影之', 'dodgeCharges', [1.4, 1.4, 1.4, 2.4, 2.4, 2.4, 3.4, 3.4], null, { slots: ['boots'], noRing: true, rare: 0.35, spread: 0.9 }),
+    affix('s_dodgeRecharge', 'suffix', '轻盈之', 'dodgeRecharge', [6, 9, 12, 15, 18, 21, 25, 30], null, { slots: ['boots'], noRing: true }),
     /* 抗性：一条全抗 + 四系单抗，只在护甲类装备与戒指上出现 */
     affix('s_allResist', 'suffix', '抗性之', 'allResist', [5, 9, 14, 20, 27, 35, 44, 54], null, { slots: ARMOR_RING.slice() }),
     affix('s_fireRes', 'suffix', '防火之', 'fireResist', [7, 13, 21, 31, 43, 57, 73, 90], null, { slots: ARMOR_RING.slice() }),
@@ -296,8 +307,8 @@
     affix('s_lightRes', 'suffix', '绝缘之', 'lightResist', [7, 13, 21, 31, 43, 57, 73, 90], null, { slots: ARMOR_RING.slice() }),
     affix('s_poisonRes', 'suffix', '解毒之', 'poisonResist', [7, 13, 21, 31, 43, 57, 73, 90], null, { slots: ARMOR_RING.slice() }),
   ];
-  /* 戒指可以出现任意类型的词缀：给所有带部位限制的词缀补上 ring */
-  AFFIXES.forEach((a) => { if (a.slots && a.slots.indexOf('ring') < 0) a.slots.push('ring'); });
+  /* 戒指可以出现任意类型的词缀：给所有带部位限制的词缀补上 ring（noRing 的例外） */
+  AFFIXES.forEach((a) => { if (a.slots && !a.noRing && a.slots.indexOf('ring') < 0) a.slots.push('ring'); });
   D.AFFIXES = AFFIXES;
   D.affixById = {}; AFFIXES.forEach((a) => { D.affixById[a.id] = a; });
   D.affixesForSlot = function (slot, kind) {
@@ -568,7 +579,7 @@
       ['冲击波', { radius: 25 }], ['快速起跳', { cd: -25 }],
       ['地裂', { dmg: 25, stun: 0.4 }], ['余震', { splash: 45, knockback: 60 }],
       ['天罚', { dmg: 20, vsBoss: 25 }], ['震慑大地', { stun: 1.2, radius: 20 }],
-      ['陨石坠落', { dmg: 50, radius: 35 }], ['连环跃击', { cd: -35, cost: -30 }], ['大地守护', { leech: 8, splash: 50 }],
+      ['陨石坠落', { dmg: 50, radius: 35 }], ['替换基础闪避', { swapDodge: true }], ['大地守护', { leech: 8, splash: 50 }],
     ],
     /* ---- 法师 ---- */
     sorc_basic: [
@@ -604,7 +615,7 @@
       ['更远传送', { radius: 25 }], ['快速传送', { cd: -25 }],
       ['空间撕裂', { dmg: 25, radius: 20 }], ['湮灭回响', { splash: 50, knockback: 70 }],
       ['双重跳跃', { cd: -20, cost: -20 }], ['湮灭冲击', { execute: { hp: 30, dmg: 60 } }],
-      ['空间崩塌', { dmg: 50, radius: 35 }], ['相位穿梭', { cd: -40 }], ['虚空回响', { manaOnCast: 12, splash: 60 }],
+      ['空间崩塌', { dmg: 50, radius: 35 }], ['替换基础闪避', { swapDodge: true }], ['虚空回响', { manaOnCast: 12, splash: 60 }],
     ],
     /* ---- 猎魔人 ---- */
     rogue_basic: [
@@ -640,7 +651,7 @@
       ['更长突进', { radius: 25 }], ['快速潜行', { cd: -25 }],
       ['影分身', { dmg: 25, radius: 20 }], ['暗影溅射', { splash: 45 }],
       ['致命突袭', { execute: { hp: 35, dmg: 70 } }], ['暗影掌控', { crit: 10, critDmg: 30 }],
-      ['千影斩', { dmg: 50, radius: 30 }], ['无形之刃', { cd: -40, cost: -30 }], ['暗影庇护', { leech: 10, splash: 50 }],
+      ['千影斩', { dmg: 50, radius: 30 }], ['替换基础闪避', { swapDodge: true }], ['暗影庇护', { leech: 10, splash: 50 }],
     ],
   };
 
@@ -673,12 +684,13 @@
     splash: (v) => '命中溅射：对周围敌人造成 ' + v + '% 伤害',
     burn: (v) => '命中点燃：每秒 ' + Math.round(v.mult * 100) + '% 伤害，持续 ' + v.dur + ' 秒',
     chill: (v) => '命中减速 ' + Math.round(v.slow * 100) + '% / ' + v.dur + ' 秒',
+    swapDodge: () => '闪避键改为释放本技能（消耗闪避充能）',
   };
   const MOD_ICON = {
     dmg: '⚔', cost: '◍', cd: '⏱', aps: '⚡', radius: '◎', count: '⁙', speed: '➤', size: '⬤', pierce: '➹',
     dur: '⌛', dot: '☠', explode: '✸', buff: '✦', stun: '✷', slow: '❄', knockback: '↦', leech: '♥',
     manaOnKill: '◈', manaOnCast: '◉', crit: '✧', critDmg: '✵', vsBoss: '☠', execute: '⚑', elem: '❂',
-    splash: '✺', burn: '🔥', chill: '❆',
+    splash: '✺', burn: '🔥', chill: '❆', swapDodge: '⤢',
   };
 
   /* 修饰符 → 说明文本 */
@@ -878,6 +890,40 @@
   D.orbById = {}; D.ORBS.forEach((o) => { D.orbById[o.id] = o; });
 
   D.MATERIAL = { id: 'shard', name: '深渊残晶', icon: '❖', color: '#9fe8ff', desc: '分解装备得到的材料，用于升级城镇建筑。' };
+
+  /* ---------------- 深渊区域风格 ----------------
+   * 每层随机挑一种：决定地面 / 墙体底色、地面装饰的种类、以及发光的物件。
+   * base 是这套风格的底色（渲染时再叠一点「层数深度」的色调），
+   * light 是发光的物件：kind 决定画成什么样子，hue / color 决定光色。 */
+  D.ABYSS_THEMES = [
+    {
+      id: 'crypt', name: '幽暗墓穴', wall: 'block',
+      base: { floor: [26, 22, 19], wall: [14, 12, 11], wallTop: [46, 40, 33] },
+      decor: ['crack', 'bone', 'rubble', 'blood', 'moss'],
+      light: 'torch', lightName: '火把', lightHue: 32, lightColor: '#ffb060', lightR: [120, 185],
+    },
+    {
+      id: 'forest', name: '幽林', wall: 'forest',
+      base: { floor: [22, 32, 21], wall: [11, 17, 11], wallTop: [44, 64, 38] },
+      decor: ['grass', 'rock', 'moss', 'root', 'crack'],
+      light: 'mushroom', lightName: '荧光蘑菇', lightHue: 132, lightColor: '#9cf08a', lightR: [105, 155],
+    },
+    {
+      id: 'snow', name: '霜原', wall: 'glacier',
+      // 冰川是白的：冰体接近纯白，缝里只留一点淡蓝灰
+      base: { floor: [52, 58, 68], wall: [104, 120, 140], wallTop: [214, 228, 242] },
+      decor: ['snow', 'ice', 'rock', 'crack'],
+      light: 'crystal', lightName: '冰晶', lightHue: 196, lightColor: '#bfeaff', lightR: [120, 170],
+    },
+    {
+      id: 'lava', name: '熔岩洞窟', wall: 'rocky',
+      // 岩壁底色是暗橙红：缝里像有余温，碎石比它亮一档
+      base: { floor: [42, 25, 19], wall: [96, 40, 18], wallTop: [104, 52, 30] },
+      decor: ['rock', 'spike', 'crack', 'blood'],
+      light: 'lava', lightName: '熔岩', lightHue: 14, lightColor: '#ff8a3c', lightR: [150, 215],
+    },
+  ];
+  D.themeById = (id) => D.ABYSS_THEMES.filter((t) => t.id === id)[0] || D.ABYSS_THEMES[0];
 
   /* ---------------- 城镇建筑 ----------------
    * 每级提供一条永久加成（战斗类加成立即生效，功能类影响对应服务）

@@ -632,14 +632,15 @@
     return game.aimWorld();
   };
 
-  SK.cast = function (game, p, id, aim) {
+  // opts.ignoreCd：绕过技能自身冷却（闪避充能体系自己控制释放节奏）
+  SK.cast = function (game, p, id, aim, opts) {
     const base = D.SKILLS[id];
     if (!base) return false;
     const sk = S.skillShape(p, base);          // 套用已生效的强化分支
     const mods = sk.mods || {};
     const lv = S.skillLevel(p, id);
     if (lv <= 0) { G.log('技能尚未解锁', 'dim'); return false; }
-    if (p.cds[id] > 0) return false;
+    if (p.cds[id] > 0 && !(opts && opts.ignoreCd)) return false;
     if (p.mana < sk.cost) { G.audio.play('noskill'); G.log('法力不足！', 'dim'); return false; }
     if (p.stun > 0) return false;
     aim = aim || SK.aimPoint(game, p);

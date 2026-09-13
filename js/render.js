@@ -6,6 +6,7 @@
   'use strict';
   const G = root.G;
   const D = G.DATA;
+  const S = G.Stats;
   const R = (G.Render = {});
   const TILE = 44;
   const VIEW_H = 840;
@@ -101,33 +102,149 @@
     [40, 34, 27], [38, 33, 32], [33, 32, 38], [31, 36, 34], [40, 30, 28],
     [34, 30, 42], [42, 32, 34], [28, 36, 42], [44, 36, 24], [30, 28, 40],
   ];
-  function palette(floor) {
+  function palette(floor, themeId) {
     if (floor === -1) {
       // 城镇「余烬营地」：温暖的黄昏色调
       return { floor: [56, 48, 40], wall: [30, 25, 21], wallTop: [88, 74, 56], accent: [96, 76, 48] };
     }
     const t = DEPTH_TINTS[(Math.max(1, floor) - 1) % DEPTH_TINTS.length];
-    const k = 0.45;
+    // 区域风格的底色（幽暗墓穴 / 幽林 / 霜原 / 熔岩洞窟）+ 一点点深度色调
+    const base = (themeId && D.themeById(themeId) ? D.themeById(themeId) : D.ABYSS_THEMES[0]).base;
+    const k = 0.18;
     return {
-      floor: [Math.round(26 + t[0] * k * 0.4), Math.round(22 + t[1] * k * 0.4), Math.round(19 + t[2] * k * 0.4)],
-      wall: [Math.round(14 + t[0] * k * 0.2), Math.round(12 + t[1] * k * 0.2), Math.round(11 + t[2] * k * 0.2)],
-      wallTop: [Math.round(46 + t[0] * k * 0.5), Math.round(40 + t[1] * k * 0.5), Math.round(33 + t[2] * k * 0.5)],
+      floor: [Math.round(base.floor[0] + t[0] * k), Math.round(base.floor[1] + t[1] * k), Math.round(base.floor[2] + t[2] * k)],
+      wall: [Math.round(base.wall[0] + t[0] * k * 0.5), Math.round(base.wall[1] + t[1] * k * 0.5), Math.round(base.wall[2] + t[2] * k * 0.5)],
+      wallTop: [Math.round(base.wallTop[0] + t[0] * k), Math.round(base.wallTop[1] + t[1] * k), Math.round(base.wallTop[2] + t[2] * k)],
       accent: t,
     };
   }
+  R.palette = palette;
   function hash2(x, y) {
     let h = Math.imul(x, 374761393) + Math.imul(y, 668265263);
     h = Math.imul(h ^ (h >>> 13), 1274126177);
     return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
   }
 
+  /* ---------------- 墙体画法（按区域风格） ----------------
+   * 暴露成 R.wall[style]：R.draw 按 m.theme 挑一种，预览页与测试也能直接调。
+   * 注意：块体故意画得比一格大、会压到隔壁格上（这样才「层层叠叠」），
+   * 所以调用方要先把整片墙的暗色底层铺好、再按墙体格子裁剪，最后才逐格画块体。
+   * 全用纯色填充 + 简单形状，避免每格新建渐变（墙体格子很多，渐变会拖慢帧率）。 */
+  const shade = (c, k, add) => {
+    const f = (v) => Math.max(0, Math.min(255, Math.round(v)));
+    return 'rgb(' + f(c[0] * k + (add || 0)) + ',' + f(c[1] * k + (add || 0)) + ',' + f(c[2] * k + (add || 0)) + ')';
+  };
+  /* 石砖（默认）：自己铺一格方块 + 面向地板的一侧描边 */
+  function wallBlock(ctx, px, py, pal, hv, open) {
+    ctx.fillStyle = 'rgb(' + pal.wall.join(',') + ')';
+    ctx.fillRect(px, py, TILE, TILE);
+    ctx.fillStyle = shade(pal.wallTop, 1, hv * 10);
+    ctx.fillRect(px + 1, py + 1, TILE - 2, TILE - 5);
+    ctx.fillStyle = 'rgba(0,0,0,0.34)';
+    ctx.fillRect(px + 1, py + TILE - 6, TILE - 2, 5);
+    ctx.strokeStyle = 'rgba(255,220,160,0.10)';
+    ctx.lineWidth = 1;
+    if (open.down) { ctx.beginPath(); ctx.moveTo(px, py + TILE - 6); ctx.lineTo(px + TILE, py + TILE - 6); ctx.stroke(); }
+    if (open.right) { ctx.beginPath(); ctx.moveTo(px + TILE - 1, py); ctx.lineTo(px + TILE - 1, py + TILE); ctx.stroke(); }
+    if (open.left) { ctx.beginPath(); ctx.moveTo(px + 1, py); ctx.lineTo(px + 1, py + TILE); ctx.stroke(); }
+    if (open.up) { ctx.beginPath(); ctx.moveTo(px, py + 1); ctx.lineTo(px + TILE, py + 1); ctx.stroke(); }
+  }
+  /* 一串带抖动的多边形顶点：中心可以偏离本格，半径也各不相同 */
+  function blobPath(ctx, cx, cy, r, sides, rot, seed) {
+    ctx.beginPath();
+    for (let i = 0; i < sides; i++) {
+      const a = rot + (i / sides) * G.TAU;
+      const rr = r * (0.66 + hash2(seed + i * 7, seed * 3 - i * 5) * 0.6);
+      const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr * 0.94;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+  /* 密林：一层层叠起来的树冠（就是你觉得好看的那版：暗底 + 三团树冠 + 叶尖高光） */
+  function wallForest(ctx, px, py, pal, hv, open) {
+    ctx.fillStyle = shade(pal.wall, 0.75);
+    ctx.fillRect(px, py, TILE, TILE);
+    const blobs = [[0.30, 0.36, 0.62, 0.95], [0.74, 0.30, 0.54, 1.15], [0.50, 0.66, 0.58, 0.72]];
+    for (let i = 0; i < blobs.length; i++) {
+      const b = blobs[i];
+      const jx = (hash2(Math.round(px) + i * 7, Math.round(py) + i * 13) - 0.5) * 10;
+      const jy = (hash2(Math.round(py) + i * 23, Math.round(px) + i * 3) - 0.5) * 10;
+      ctx.fillStyle = shade(pal.wallTop, b[3] * (0.75 + hv * 0.3));
+      ctx.beginPath();
+      ctx.arc(px + TILE * b[0] + jx, py + TILE * b[1] + jy, TILE * b[2], 0, G.TAU);
+      ctx.fill();
+    }
+    // 叶尖高光
+    ctx.fillStyle = 'rgba(190,240,160,0.16)';
+    ctx.beginPath();
+    ctx.arc(px + TILE * (0.3 + hv * 0.45), py + TILE * (0.26 + hv * 0.3), 3.2, 0, G.TAU);
+    ctx.arc(px + TILE * (0.68 - hv * 0.3), py + TILE * (0.58 + hv * 0.25), 2.4, 0, G.TAU);
+    ctx.fill();
+  }
+  /* 冰川：暗底 + 三块冰体互相压着（位置 / 大小 / 亮度跟密林那三团一致，只是带棱角） */
+  function wallGlacier(ctx, px, py, pal, hv, open) {
+    ctx.fillStyle = shade(pal.wall, 0.72);
+    ctx.fillRect(px, py, TILE, TILE);
+    const slabs = [[0.30, 0.36, 0.62, 0.78], [0.74, 0.30, 0.54, 1.2], [0.50, 0.66, 0.58, 0.96]];
+    for (let i = 0; i < slabs.length; i++) {
+      const s = slabs[i];
+      const jx = (hash2(Math.round(px) + i * 7, Math.round(py) + i * 13) - 0.5) * 10;
+      const jy = (hash2(Math.round(py) + i * 23, Math.round(px) + i * 3) - 0.5) * 10;
+      ctx.fillStyle = shade(pal.wallTop, s[3] * (0.8 + hv * 0.3));
+      blobPath(ctx, px + TILE * s[0] + jx, py + TILE * s[1] + jy, TILE * s[2] * (0.86 + hv * 0.12),
+        6, (i * 1.1 + hv * 2), Math.round(px) * 3 + Math.round(py) + i * 37);
+    }
+    // 冰面棱线 + 一点高光
+    ctx.strokeStyle = 'rgba(240,252,255,' + (0.14 + hv * 0.2) + ')';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(px + TILE * (0.2 + hv * 0.2), py + TILE * (0.22 + hv * 0.22));
+    ctx.lineTo(px + TILE * (0.52 + hv * 0.2), py + TILE * (0.62 + hv * 0.2));
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.1 + hv * 0.16) + ')';
+    ctx.fillRect(px + TILE * (0.18 + hv * 0.3), py + TILE * (0.14 + hv * 0.2), TILE * 0.2, TILE * 0.09);
+  }
+  /* 崎岖岩石：暗底 + 三块碎石互相挤压（同一套位置，五边形、更暗更硬），缝里透熔岩光 */
+  function wallRocky(ctx, px, py, pal, hv, open) {
+    ctx.fillStyle = shade(pal.wall, 0.62);
+    ctx.fillRect(px, py, TILE, TILE);
+    const chunks = [[0.30, 0.36, 0.62, 0.8], [0.74, 0.30, 0.54, 1.18], [0.50, 0.66, 0.58, 1.0]];
+    for (let i = 0; i < chunks.length; i++) {
+      const c = chunks[i];
+      const jx = (hash2(Math.round(px) + i * 7, Math.round(py) + i * 13) - 0.5) * 10;
+      const jy = (hash2(Math.round(py) + i * 23, Math.round(px) + i * 3) - 0.5) * 10;
+      ctx.fillStyle = shade(pal.wallTop, c[3] * (0.76 + hv * 0.34));
+      blobPath(ctx, px + TILE * c[0] + jx, py + TILE * c[1] + jy, TILE * c[2] * (0.84 + hv * 0.14),
+        5, (i * 1.3 + hv * 2), Math.round(px) * 5 + Math.round(py) + i * 41);
+    }
+    // 石缝
+    ctx.strokeStyle = 'rgba(0,0,0,0.38)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(px + TILE * (0.06 + hv * 0.14), py + TILE * (0.5 + hv * 0.16));
+    ctx.lineTo(px + TILE * (0.46 + hv * 0.12), py + TILE * (0.62 + hv * 0.14));
+    ctx.lineTo(px + TILE * 0.94, py + TILE * (0.46 + hv * 0.18));
+    ctx.stroke();
+    // 缝里的熔岩微光
+    if (hv > 0.45) {
+      ctx.strokeStyle = 'rgba(255,138,60,' + (0.16 + hv * 0.24) + ')';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(px + TILE * (0.5 + hv * 0.08), py + TILE * 0.62);
+      ctx.lineTo(px + TILE * (0.66 + hv * 0.1), py + TILE * (0.84 + hv * 0.06));
+      ctx.stroke();
+    }
+  }
+
   /* ---------------- 世界绘制 ---------------- */
+  R.wall = { block: wallBlock, forest: wallForest, glacier: wallGlacier, rocky: wallRocky };
   R.draw = function (game) {
     const ctx = R.ctx;
     if (!ctx) return;
     const m = game.map;
     if (!m) return;
-    const pal = palette(m.area === 'town' ? -1 : game.floor);
+    const pal = palette(m.area === 'town' ? -1 : game.floor, m.theme);
     const cs = Math.cos(R.cam.sx * 0.02) * R.cam.sx, sn = R.cam.sy;
     ctx.save();
     ctx.setTransform(R.dpr, 0, 0, R.dpr, 0, 0);
@@ -179,6 +296,55 @@
       } else if (d.kind === 'moss') {
         ctx.fillStyle = 'rgba(58,92,50,0.4)';
         ctx.beginPath(); ctx.ellipse(0, 0, 10 * d.s, 6 * d.s, 0, 0, G.TAU); ctx.fill();
+      } else if (d.kind === 'grass') {
+        // 草丛：几根草叶
+        ctx.strokeStyle = 'rgba(96,150,74,0.55)'; ctx.lineWidth = 1.6;
+        for (let i = -2; i <= 2; i++) {
+          ctx.beginPath();
+          ctx.moveTo(i * 3.4 * d.s, 2 * d.s);
+          ctx.quadraticCurveTo(i * 3.4 * d.s + 1.5, -3 * d.s, i * 3.4 * d.s + (i % 2 ? 2.6 : -2.6), -7 * d.s);
+          ctx.stroke();
+        }
+      } else if (d.kind === 'root') {
+        // 树根 / 藤蔓
+        ctx.strokeStyle = 'rgba(72,58,36,0.5)'; ctx.lineWidth = 2.4 * d.s;
+        ctx.beginPath();
+        ctx.moveTo(-11 * d.s, 3 * d.s);
+        ctx.quadraticCurveTo(0, -6 * d.s, 11 * d.s, 1 * d.s);
+        ctx.stroke();
+      } else if (d.kind === 'snow') {
+        // 雪堆：一层柔白的隆起
+        ctx.fillStyle = 'rgba(226,238,248,0.5)';
+        ctx.beginPath(); ctx.ellipse(0, 0, 12 * d.s, 7 * d.s, 0, 0, G.TAU); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.beginPath(); ctx.ellipse(-2 * d.s, -2 * d.s, 7 * d.s, 4 * d.s, 0, 0, G.TAU); ctx.fill();
+      } else if (d.kind === 'ice') {
+        // 冰块：半透明的蓝色棱块
+        ctx.fillStyle = 'rgba(150,214,238,0.42)';
+        ctx.beginPath();
+        ctx.moveTo(0, -9 * d.s); ctx.lineTo(7 * d.s, -1 * d.s); ctx.lineTo(3 * d.s, 7 * d.s);
+        ctx.lineTo(-4 * d.s, 6 * d.s); ctx.lineTo(-7 * d.s, -2 * d.s); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = 'rgba(226,246,255,0.5)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, -9 * d.s); ctx.lineTo(1, 5 * d.s); ctx.stroke();
+      } else if (d.kind === 'spike') {
+        // 石椎：从地里戳出来的尖石
+        ctx.fillStyle = 'rgba(96,74,66,0.6)';
+        ctx.beginPath();
+        ctx.moveTo(-6 * d.s, 6 * d.s); ctx.lineTo(0, -12 * d.s); ctx.lineTo(6 * d.s, 6 * d.s); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = 'rgba(255,150,90,0.22)';
+        ctx.beginPath();
+        ctx.moveTo(-2 * d.s, 6 * d.s); ctx.lineTo(0, -12 * d.s); ctx.lineTo(2 * d.s, 6 * d.s); ctx.closePath(); ctx.fill();
+      } else if (d.kind === 'rock') {
+        // 石块：一堆棱角分明的小石头
+        ctx.fillStyle = 'rgba(126,120,110,0.42)';
+        [[-7, 1, 5], [1, -2, 6], [6, 3, 4]].forEach((p) => {
+          ctx.beginPath();
+          ctx.moveTo((p[0] - p[2]) * d.s, (p[1] + p[2] * 0.7) * d.s);
+          ctx.lineTo((p[0] - p[2] * 0.3) * d.s, (p[1] - p[2]) * d.s);
+          ctx.lineTo((p[0] + p[2]) * d.s, (p[1] - p[2] * 0.2) * d.s);
+          ctx.lineTo((p[0] + p[2] * 0.5) * d.s, (p[1] + p[2] * 0.8) * d.s);
+          ctx.closePath(); ctx.fill();
+        });
       } else {
         ctx.fillStyle = 'rgba(120,110,95,0.35)';
         [[-6, -4], [4, 2], [7, -5]].forEach((p) => { ctx.beginPath(); ctx.arc(p[0] * d.s, p[1] * d.s, 2.4, 0, G.TAU); ctx.fill(); });
@@ -186,27 +352,31 @@
       ctx.restore();
     });
 
-    /* --- 墙 --- */
+    /* --- 墙（按区域风格换画法：石块 / 密林 / 冰川 / 崎岖岩石） ---
+     * 每格先铺一层暗色底，再把「树冠 / 冰体 / 碎石」压上去 —— 块体互相重叠，
+     * 没被盖住的暗底就成了缝，所以看上去是层层叠叠的一大片而不是方阵。
+     * 不做裁剪：裁切会在墙面与地板的交界处切出直线，反而难看。 */
+    const wallStyle = (D.themeById(m.theme) || D.ABYSS_THEMES[0]).wall || 'block';
     for (let ty = y0; ty <= y1; ty++) {
       for (let tx = x0; tx <= x1; tx++) {
         if (G.Dungeon.at(m, tx, ty) !== 0) continue;
         const hv = hash2(tx, ty);
         const px = tx * TILE, py = ty * TILE;
-        ctx.fillStyle = 'rgb(' + pal.wall.join(',') + ')';
-        ctx.fillRect(px, py, TILE, TILE);
-        // 顶面
-        ctx.fillStyle = 'rgb(' + (pal.wallTop[0] + hv * 10) + ',' + (pal.wallTop[1] + hv * 10) + ',' + (pal.wallTop[2] + hv * 10) + ')';
-        ctx.fillRect(px + 1, py + 1, TILE - 2, TILE - 5);
-        ctx.fillStyle = 'rgba(0,0,0,0.34)';
-        ctx.fillRect(px + 1, py + TILE - 6, TILE - 2, 5);
-        // 面向地板的一侧高光
-        ctx.strokeStyle = 'rgba(255,220,160,0.10)';
-        ctx.lineWidth = 1;
-        if (G.Dungeon.at(m, tx, ty + 1) === 1) { ctx.beginPath(); ctx.moveTo(px, py + TILE - 6); ctx.lineTo(px + TILE, py + TILE - 6); ctx.stroke(); }
-        if (G.Dungeon.at(m, tx + 1, ty) === 1) { ctx.beginPath(); ctx.moveTo(px + TILE - 1, py); ctx.lineTo(px + TILE - 1, py + TILE); ctx.stroke(); }
-        if (G.Dungeon.at(m, tx - 1, ty) === 1) { ctx.beginPath(); ctx.moveTo(px + 1, py); ctx.lineTo(px + 1, py + TILE); ctx.stroke(); }
-        if (G.Dungeon.at(m, tx, ty - 1) === 1) { ctx.beginPath(); ctx.moveTo(px, py + 1); ctx.lineTo(px + TILE, py + 1); ctx.stroke(); }
+        const wf = R.wall[wallStyle] || R.wall.block;
+        wf(ctx, px, py, pal, hv, {
+          down: G.Dungeon.at(m, tx, ty + 1) === 1,
+          right: G.Dungeon.at(m, tx + 1, ty) === 1,
+          left: G.Dungeon.at(m, tx - 1, ty) === 1,
+          up: G.Dungeon.at(m, tx, ty - 1) === 1,
+        });
       }
+    }
+
+    /* --- 发光物（火把 / 荧光蘑菇 / 冰晶 / 熔岩）：颜色与形状跟着区域风格走 --- */
+    for (let i = 0; i < m.torches.length; i++) {
+      const t = m.torches[i];
+      if (Math.abs(t.x - R.cam.x) > halfW + 90 || Math.abs(t.y - R.cam.y) > halfH + 90) continue;
+      R.drawLightSource(ctx, t);
     }
 
     /* --- 城镇建筑 --- */
@@ -220,7 +390,12 @@
     if (m.area === 'town' && m.gate) R.drawGate(ctx, m.gate, game);
 
     /* --- 掉落物 --- */
-    game.pickups.forEach((pk) => { if (R.visible(pk, halfW, halfH)) R.drawPickup(ctx, pk, game); });
+    game.pickups.forEach((pk) => {
+      if (!R.visible(pk, halfW, halfH)) return;
+      // 被过滤器隐藏的掉落平时不画，长按「显示全部装备」键时照常画出来
+      if (G.UI.filterHidden(pk.item) && !G.UI.revealHeld()) return;
+      R.drawPickup(ctx, pk, game);
+    });
 
     /* --- 可破坏物 --- */
     game.props.forEach((pr) => { if (R.visible(pr, halfW, halfH)) R.drawProp(ctx, pr); });
@@ -366,6 +541,7 @@
     const showAll = G.input.down('AltLeft') || G.input.down('AltRight');
     game.pickups.forEach((pk) => {
       if (!R.visible(pk, halfW, halfH)) return;
+      if (G.UI.filterHidden(pk.item) && !G.UI.revealHeld()) return;   // 隐藏的掉落平时连名字也不显示
       const dist = game.player ? G.dist(pk.x, pk.y, game.player.x, game.player.y) : 0;
       if (!showAll && (pk.item.cat === 'gold' || pk.item.cat === 'shard')) return;
       if (!showAll && dist > 190 && pk.item.cat === 'equip' && pk.item.rarity === 'common') return;
@@ -651,6 +827,64 @@
     ctx.restore();
   };
 
+  /* 区域风格的发光物：火把 / 荧光蘑菇 / 冰晶 / 熔岩（带一点呼吸般的明暗） */
+  R.drawLightSource = function (ctx, t) {
+    const kind = t.kind || 'torch';
+    const col = t.color || '#ffb060';
+    const pulse = 0.86 + Math.sin(R.time * 4 + (t.phase || 0)) * 0.14;
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    // 地面上的光晕
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 26);
+    glow.addColorStop(0, col + 'aa');
+    glow.addColorStop(1, col + '00');
+    ctx.globalAlpha = 0.5 * pulse;
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(0, 0, 26, 0, G.TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+    if (kind === 'mushroom') {
+      ctx.fillStyle = '#d8e6c8';
+      ctx.fillRect(-1.6, -4, 3.2, 9);
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.ellipse(0, -6, 8 * pulse, 5.4 * pulse, 0, Math.PI, 0); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      ctx.beginPath(); ctx.arc(-2.6, -7.4, 1.1, 0, G.TAU); ctx.arc(2.2, -6.2, 0.9, 0, G.TAU); ctx.fill();
+    } else if (kind === 'crystal') {
+      ctx.fillStyle = col;
+      ctx.globalAlpha = 0.9;
+      [[0, -13, 4.4], [-6, -8, 3.2], [6, -9, 3.6]].forEach((c) => {
+        ctx.beginPath();
+        ctx.moveTo(c[0], c[1] - 5 * pulse);
+        ctx.lineTo(c[0] + c[2], c[1] + 4);
+        ctx.lineTo(c[0], c[1] + 7);
+        ctx.lineTo(c[0] - c[2], c[1] + 4);
+        ctx.closePath(); ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillRect(-0.8, -18, 1.6, 8);
+    } else if (kind === 'lava') {
+      ctx.fillStyle = col;
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath(); ctx.ellipse(0, 0, 13 * pulse, 8 * pulse, 0, 0, G.TAU); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#ffe6a8';
+      ctx.beginPath(); ctx.ellipse(0, -1, 5 * pulse, 3 * pulse, 0, 0, G.TAU); ctx.fill();
+      ctx.strokeStyle = col; ctx.lineWidth = 2.4; ctx.globalAlpha = 0.7;
+      ctx.beginPath(); ctx.moveTo(-15, 4); ctx.lineTo(-4, 1); ctx.moveTo(5, -2); ctx.lineTo(16, -5); ctx.stroke();
+      ctx.globalAlpha = 1;
+    } else {
+      // 火把：木杆 + 火苗
+      ctx.fillStyle = '#4a3520';
+      ctx.fillRect(-1.8, -6, 3.6, 14);
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.ellipse(0, -9, 4.4 * pulse, 7 * pulse, 0, 0, G.TAU); ctx.fill();
+      ctx.fillStyle = '#ffe9a8';
+      ctx.beginPath(); ctx.ellipse(0, -9, 2 * pulse, 3.6 * pulse, 0, 0, G.TAU); ctx.fill();
+    }
+    ctx.restore();
+  };
+
   R.drawProp = function (ctx, pr) {
     ctx.save();
     ctx.translate(pr.x, pr.y);
@@ -756,8 +990,9 @@
     const k = lw / (halfW * 2); // 世界 -> 光照画布
     lc.setTransform(1, 0, 0, 1, 0, 0);
     lc.clearRect(0, 0, lw, lh);
-    const dark = game.area === 'town' ? 0.52 : 0.9;
-    lc.fillStyle = 'rgba(3,3,6,' + dark + ')';
+    // 整体明暗：深渊 0.78 / 城镇 0.46（数值越小越亮）；底色不用纯黑，暗处留一点冷色
+    const dark = game.area === 'town' ? 0.46 : 0.78;
+    lc.fillStyle = 'rgba(12,13,20,' + dark + ')';
     lc.fillRect(0, 0, lw, lh);
     lc.globalCompositeOperation = 'destination-out';
     const ox = R.cam.x - halfW, oy = R.cam.y - halfH;
@@ -785,7 +1020,8 @@
     }
     // 玩家
     const p = game.player;
-    if (p) put(p.x, p.y, 300 + Math.sin(R.time * 3) * 6, 1);
+    // 玩家身上的光：范围大一点，周围不至于全靠火把
+    if (p) put(p.x, p.y, 330 + Math.sin(R.time * 3) * 6, 1);
     // 技能 / 投射物 / 地面效果
     game.projectiles.forEach((pj) => put(pj.x, pj.y, pj.elem === 'physical' ? 60 : 130, 0.85));
     game.grounds.forEach((g) => put(g.x, g.y, g.r * 1.5, 0.85));
@@ -811,10 +1047,10 @@
     const p = game.player;
     ctx.save();
     ctx.setTransform(R.dpr, 0, 0, R.dpr, 0, 0);
-    // 暗角
-    const vg = ctx.createRadialGradient(R.w / 2, R.h / 2, Math.min(R.w, R.h) * 0.34, R.w / 2, R.h / 2, Math.max(R.w, R.h) * 0.78);
+    // 暗角（别压太狠，边缘留出可读性）
+    const vg = ctx.createRadialGradient(R.w / 2, R.h / 2, Math.min(R.w, R.h) * 0.42, R.w / 2, R.h / 2, Math.max(R.w, R.h) * 0.78);
     vg.addColorStop(0, 'rgba(0,0,0,0)');
-    vg.addColorStop(1, 'rgba(0,0,0,0.72)');
+    vg.addColorStop(1, 'rgba(0,0,0,0.5)');
     ctx.fillStyle = vg;
     ctx.fillRect(0, 0, R.w, R.h);
     // 受伤红屏
@@ -852,6 +1088,68 @@
   };
 
   /* ---------------- 玩家 ---------------- */
+  /* ---------------- 状态条：头顶血条 / 蓝条，脚下闪避充能格 ----------------
+   * 在 drawPlayer 的 translate 之外绘制，免得跟着人物旋转或被闪烁的透明度带着抖。
+   * 三块都由设置面板里的开关控制（默认全开）。
+   */
+  const BAR_W = 34, BAR_H = 5, BAR_GAP = 2;
+  R.SHOW_DEFAULT = { hpBar: true, manaBar: true, dodgeBar: true };
+  R.showFlag = function (key) {
+    const d = G.Settings && G.Settings.data;
+    return d ? d[key] !== false : (R.SHOW_DEFAULT[key] !== false);
+  };
+
+  // 一根条：底 + 内槽 + 按比例填充的亮色
+  function bar(ctx, cx, top, frac, color, back, glow) {
+    const w = BAR_W, h = BAR_H;
+    ctx.fillStyle = 'rgba(0,0,0,0.68)';
+    ctx.fillRect(cx - w / 2 - 1.5, top - 1.5, w + 3, h + 3);
+    ctx.fillStyle = back;
+    ctx.fillRect(cx - w / 2, top, w, h);
+    const f = G.clamp(frac, 0, 1);
+    if (f > 0) {
+      if (glow) { ctx.shadowColor = glow; ctx.shadowBlur = 6; }
+      ctx.fillStyle = color;
+      ctx.fillRect(cx - w / 2, top, Math.max(1, w * f), h);
+      if (glow) ctx.shadowBlur = 0;
+    }
+  }
+
+  R.drawPlayerBars = function (ctx, p) {
+    if (!p || p.dead) return;
+    const st = p.stats || {};
+    const bx = p.x, by = p.y - (p.jumpHeight || 0);
+    /* --- 头顶：血条（上）/ 蓝条（下） --- */
+    if (R.showFlag('hpBar')) {
+      const maxLife = st.maxLife || p.maxLife || 1;
+      bar(ctx, bx, by - 38, (p.life == null ? maxLife : p.life) / Math.max(1, maxLife), '#d94141', '#3a1416', '#ff6a5a');
+    }
+    if (R.showFlag('manaBar')) {
+      const maxMana = st.maxMana || p.maxMana || 1;
+      bar(ctx, bx, by - 38 + BAR_H + BAR_GAP, (p.mana == null ? maxMana : p.mana) / Math.max(1, maxMana), '#3f8fd6', '#122130', '#6ab6ff');
+    }
+    /* --- 脚下：闪避充能格（一格 = 一次闪避） --- */
+    if (R.showFlag('dodgeBar')) {
+      const n = Math.max(1, (st.dodgeMax) || S.dodgeMax(p));
+      const cur = S.dodgeCharges(p);
+      const pw = n > 3 ? 8 : 10, gap = 2;
+      const total = n * pw + (n - 1) * gap;
+      const left = bx - total / 2, top = by + 15, ph = 4;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(left - 1, top - 1, total + 2, ph + 2);
+      for (let i = 0; i < n; i++) {
+        const px = left + i * (pw + gap);
+        ctx.fillStyle = '#16301c';
+        ctx.fillRect(px, top, pw, ph);
+        const f = G.clamp(cur - i, 0, 1);
+        if (f > 0) {
+          ctx.fillStyle = f >= 1 ? '#48b04c' : '#2f7a35';
+          ctx.fillRect(px, top, Math.max(1, pw * f), ph);
+        }
+      }
+    }
+  };
+
   R.drawPlayer = function (ctx, p, game) {
     const st = p.stats;
     ctx.save();
@@ -921,6 +1219,8 @@
       ctx.beginPath(); ctx.arc(0, 4, 20 + (1 - p.castAnim / 0.25) * 14, 0, G.TAU); ctx.stroke();
     }
     ctx.restore();
+    // 头顶血条 / 蓝条 + 脚下闪避条
+    R.drawPlayerBars(ctx, p);
   };
 
   /* ---------------- 怪物 ---------------- */
@@ -1177,6 +1477,7 @@
     if (big) {
       game.pickups.forEach((pk) => {
         if (pk.item.cat !== 'equip') return;
+        if (G.UI.filterHidden(pk.item) && !G.UI.revealHeld()) return;   // 小地图上也不标隐藏的掉落
         const q = toMap(pk.x, pk.y);
         ctx.fillStyle = G.RARITY_COLOR[pk.item.rarity];
         ctx.fillRect(q.x - 1, q.y - 1, 2, 2);

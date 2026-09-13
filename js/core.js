@@ -6,8 +6,8 @@
 (function (root) {
   'use strict';
   const G = (root.G = root.G || {});
-  /* 版本号：与根目录 CHANGELOG.md 里最新的一条保持一致（tools/smoke.js 会校验） */
-  G.VERSION = '0.2.0';
+  /* 版本号：与根目录 CHANGELOG.md 顶部的版本行（vX.Y.Z）保持一致（tools/smoke.js 会校验） */
+  G.VERSION = '0.2.4';
   G.VERSION_TAG = 'v' + G.VERSION;
   G.HEADLESS = !!root.__HEADLESS__;
 
@@ -325,6 +325,14 @@
    */
   const SETTINGS_KEY = 'shadow-abyss-settings-v1';
 
+  // 界面显示开关（默认全开，可在设置面板里逐项关闭）
+  const SHOW_DEFS = [
+    { id: 'hpBar', name: '在人物头顶显示血条' },
+    { id: 'manaBar', name: '在人物头顶显示蓝条' },
+    { id: 'dodgeBar', name: '在人物脚下显示闪避条' },
+  ];
+  const SHOW_FLAGS = SHOW_DEFS.map((d) => d.id);
+
   // 可重新绑定的动作（顺序即设置面板中的显示顺序）
   const ACTIONS = [
     { id: 'attack', name: '普通攻击', group: '战斗' },
@@ -347,6 +355,7 @@
     { id: 'stash', name: '仓库', group: '界面' },
     { id: 'town', name: '城镇建设', group: '界面' },
     { id: 'map', name: '大地图', group: '界面' },
+    { id: 'revealFilter', name: '长按显示全部装备（过滤器）', group: '界面' },
     { id: 'recall', name: '往返城镇 / 深渊', group: '界面' },
     { id: 'help', name: '帮助', group: '界面' },
     { id: 'settings', name: '设置', group: '界面' },
@@ -356,7 +365,7 @@
     dodge: 'Space', potionLife: 'KeyQ', potionMana: 'KeyE', pickup: 'KeyF',
     inventory: 'KeyI', character: 'KeyC', vendor: 'KeyV', help: 'KeyH',
     map: 'KeyM', craft: 'KeyG', stash: 'KeyK', town: 'KeyB',
-    recall: 'KeyT', settings: 'KeyO',
+    recall: 'KeyT', settings: 'KeyO', revealFilter: 'KeyX',
   };
 
   const MODE_DEFS = [
@@ -405,7 +414,11 @@
       return Settings.data;
     },
     defaults() {
-      return { mode: 'mouse', audio: true, binds: defaultBinds() };
+      return {
+        mode: 'mouse', audio: true, binds: defaultBinds(),
+        // 界面显示：头顶血条 / 头顶蓝条 / 脚下闪避条
+        hpBar: true, manaBar: true, dodgeBar: true,
+      };
     },
     load() {
       const d = Settings.defaults();
@@ -415,6 +428,9 @@
         const saved = JSON.parse(raw);
         if (saved && (saved.mode === 'mouse' || saved.mode === 'wasd')) d.mode = saved.mode;
         if (saved && typeof saved.audio === 'boolean') d.audio = saved.audio;
+        SHOW_FLAGS.forEach((k) => {
+          if (saved && typeof saved[k] === 'boolean') d[k] = saved[k];
+        });
         if (saved && saved.binds) {
           ['mouse', 'wasd'].forEach((m) => {
             if (!saved.binds[m]) return;
@@ -436,13 +452,25 @@
     reset() {
       const mode = Settings.data ? Settings.data.mode : 'mouse';
       const audio = Settings.data ? Settings.data.audio : true;
+      const shows = {};
+      SHOW_FLAGS.forEach((k) => { shows[k] = Settings.show(k); });
       Settings.data = Settings.defaults();
       Settings.data.mode = mode;
       Settings.data.audio = audio;
+      SHOW_FLAGS.forEach((k) => { Settings.data[k] = shows[k]; });
       Settings.save();
       return Settings.data;
     },
     mode() { return Settings.data ? Settings.data.mode : 'mouse'; },
+    SHOWS: SHOW_DEFS,
+    // 显示开关：没存过 → 默认开
+    show(key) { return Settings.data ? Settings.data[key] !== false : true; },
+    setShow(key, on) {
+      if (SHOW_FLAGS.indexOf(key) < 0) return false;
+      Settings.data[key] = !!on;
+      Settings.save();
+      return true;
+    },
     modeDef(id) { return MODE_DEFS.filter((m) => m.id === (id || Settings.mode()))[0] || MODE_DEFS[0]; },
     setMode(id) {
       if (id !== 'mouse' && id !== 'wasd') return false;

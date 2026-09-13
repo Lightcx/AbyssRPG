@@ -29,7 +29,7 @@ function FakeCtx() {
     shadowColor: '#000', shadowBlur: 0, globalCompositeOperation: 'source-over',
     save: noop, restore: noop, setTransform: noop, resetTransform: noop,
     translate: noop, scale: noop, rotate: noop, clearRect: noop,
-    fillRect: noop, strokeRect: noop, beginPath: noop, closePath: noop,
+    fillRect: noop, strokeRect: noop, rect: noop, beginPath: noop, closePath: noop,
     moveTo: noop, lineTo: noop, quadraticCurveTo: noop, bezierCurveTo: noop,
     arc: noop, ellipse: noop, fill: noop, stroke: noop, clip: noop,
     drawImage: noop, setLineDash: noop, putImageData: noop,
@@ -1280,14 +1280,16 @@ section('15b. 前缀 / 后缀体系');
   ok(ms.slots.indexOf('chest') < 0 && ms.slots.indexOf('helm') < 0 && ms.slots.indexOf('gloves') < 0 && ms.slots.indexOf('belt') < 0,
     '胸甲 / 头盔 / 手套 / 腰带 上不会出现移速');
 
-  /* ---- 戒指可以出现任意类型的词缀 ---- */
+  /* ---- 戒指可以出现任意类型的词缀（例外：两条闪避靴子专属词缀） ---- */
+  const bootsOnly = ['s_dodgeCharges', 's_dodgeRecharge'];
   const notOnRing = G.DATA.AFFIXES.filter((a) => a.slots && a.slots.indexOf('ring') < 0).map((a) => a.id);
-  ok(notOnRing.length === 0, '所有词缀都能出现在戒指上', notOnRing.join(','));
+  ok(notOnRing.length === bootsOnly.length && notOnRing.every((id) => bootsOnly.indexOf(id) >= 0),
+    '只有两条闪避词缀不出现在戒指上', notOnRing.join(','));
   const ringPre = G.DATA.affixesForSlot('ring', 'prefix').length;
   const ringSuf = G.DATA.affixesForSlot('ring', 'suffix').length;
   ok(ringPre === G.DATA.AFFIXES.filter((a) => a.kind === 'prefix').length &&
-    ringSuf === G.DATA.AFFIXES.filter((a) => a.kind === 'suffix').length,
-    '戒指拥有全部前后缀池', ringPre + '+' + ringSuf);
+    ringSuf === G.DATA.AFFIXES.filter((a) => a.kind === 'suffix').length - bootsOnly.length,
+    '戒指拥有除靴子专属外的全部前后缀池', ringPre + '+' + ringSuf);
 
   /* ---- 攻击速度 / 施法速度已合并为一条 ---- */
   const apsAffixes = G.DATA.AFFIXES.filter((a) => a.stat === 'aps' || a.stat === 'castSpeed');
@@ -1667,8 +1669,11 @@ section('16c. 装备提升标识 / 红色边框 / 背包装整理规则');
   highLvl.req = { level: 99, str: 1 };
   ok(!!G.UI.canEquip(highLvl), '高等级装备无法穿戴', G.UI.canEquip(highLvl));
   ok(G.UI.cantEquip(highLvl) === true, '无法穿戴的装备会被标记');
-  ok(G.UI.isUpgrade(highLvl) === false, '穿不上的装备不算“可提升”');
   ok(G.UI.cellClass(highLvl).indexOf('cant-equip') >= 0, '红框类名已添加', G.UI.cellClass(highLvl));
+  // 红框只表示「暂时穿不上」，评分箭头照旧：穿不上的更强装备同样标绿箭头
+  ok(G.UI.isUpgrade(highLvl) === true, '穿不上但更强的装备仍标记为可提升');
+  ok(G.UI.cellClass(highLvl).indexOf('upgrade') >= 0, '红框装备同时带 upgrade 类', G.UI.cellClass(highLvl));
+  ok(G.UI.cellInner(highLvl).indexOf('up-mark') >= 0, '红框装备显示绿色上三角');
   const strReq = G.Loot.makeItem(g.rng, { ilvl: 30, slot: 'chest', rarity: 'rare' });
   strReq.req = { level: 1, str: 9999 };
   ok(G.UI.cantEquip(strReq) === true, '属性不足同样标记为无法穿戴');
@@ -1686,6 +1691,7 @@ section('16c. 装备提升标识 / 红色边框 / 背包装整理规则');
   ok(grid.children[0].className.indexOf('upgrade') >= 0, '背包格子应用了提升样式');
   ok(grid.children[2].className.indexOf('cant-equip') >= 0, '背包格子应用了红框样式');
   ok(grid.children[0].innerHTML.indexOf('up-mark') >= 0, '背包格子渲染出绿色上三角');
+  ok(grid.children[2].innerHTML.indexOf('up-mark') >= 0, '红框格子也渲染出绿色上三角');
 
   // 整理规则：稀有度优先 > 同稀有度内可提升优先 > 物品等级
   p.inventory = new Array(60).fill(null);
@@ -2096,17 +2102,23 @@ section('16f. 词缀前后缀标识 / 悬停看当前装备 / 宝石拿起镶嵌
 }
 
 /* ============================================================ */
-section('16g. 对比窗口竖线 & 孔位菱形标识');
+section('16g. 对比窗口分离 & 孔位菱形标识');
 {
   const cssSrc2 = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
-  // 两个对比窗口是各自独立的框，中间留一条竖线
+  // 每个对比窗口都是独立的小窗：各自有边框 / 底色 / 阴影，高度互不拉伸
+  const wide = cssSrc2.match(/#tooltip\.wide\{[^}]*\}/);
+  ok(wide && wide[0].indexOf('border:0') >= 0 && wide[0].indexOf('background:none') >= 0 &&
+    wide[0].indexOf('padding:0') >= 0,
+    '对比时外层不再画共用的框与底（短窗口才不会被拉长）', wide ? wide[0].slice(0, 70) : 'none');
   const divider = cssSrc2.match(/#tooltip \.tcol \+ \.tcol::before\{[^}]*\}/);
-  ok(divider && /background:rgba\([^)]*\)/.test(divider[0]) && divider[0].indexOf('width:1px') >= 0,
-    '对比窗口之间有竖向分隔线', divider ? divider[0] : 'none');
-  ok(/\.twin\{[^}]*gap:16px/.test(cssSrc2), '两个对比窗口分离显示（flex 间距）');
-  ok(/\.tcol\{[^}]*width:292px/.test(cssSrc2) && /\.tcol\{[^}]*border:1px solid/.test(cssSrc2),
-    '每个对比窗口有独立的边框');
-  ok(/\.tcol\{[^}]*padding:8px 10px/.test(cssSrc2), '窗口用内边距与竖线留出间距');
+  ok(!divider, '窗口之间不再有竖向分隔线（改成两个独立的窗）');
+  ok(/\.twin\{[^}]*gap:16px/.test(cssSrc2) && /\.twin\{[^}]*align-items:flex-start/.test(cssSrc2),
+    '对比窗口并排且各自独立（flex + flex-start，不互相拉伸）');
+  const tcolCss = cssSrc2.match(/#tooltip \.tcol\{[^}]*\}/);
+  ok(tcolCss && tcolCss[0].indexOf('width:292px') >= 0 && tcolCss[0].indexOf('border:1px solid') >= 0 &&
+    tcolCss[0].indexOf('background:') >= 0 && tcolCss[0].indexOf('box-shadow:') >= 0,
+    '每个对比窗口自己就是一个完整的小窗（边框 + 底色 + 阴影）');
+  ok(tcolCss && tcolCss[0].indexOf('padding:8px 10px') >= 0, '窗口内边距保持不变');
   ok(/#tooltip \.tstat\.base \.arng::before\{content:"范围 "/.test(cssSrc2.replace(/\n/g, '')),
     '基础数值区间带「范围」前缀，避免与当前数值混淆');
   // 孔位菱形
@@ -3304,8 +3316,8 @@ section('16p. 特效渲染：NaN 不会再打崩光照层');
 section('18. 版本号与变更记录');
 {
   const cl = fs.readFileSync(path.join(__dirname, '..', 'CHANGELOG.md'), 'utf8');
-  const m = cl.match(/^## \[(\d+\.\d+\.\d+)\]/m);
-  ok(!!m, 'CHANGELOG.md 有版本标题', m ? m[0] : '未找到');
+  const m = cl.match(/^v(\d+\.\d+\.\d+)$/m);
+  ok(!!m, 'CHANGELOG.md 有版本行（vX.Y.Z）', m ? m[0] : '未找到');
   ok(m && G.VERSION === m[1], 'G.VERSION 与 CHANGELOG 最新版本一致',
     G.VERSION + ' vs ' + (m ? m[1] : '-'));
   ok(G.VERSION_TAG === 'v' + G.VERSION, '版本标签带 v 前缀', G.VERSION_TAG);
@@ -3327,9 +3339,20 @@ section('18. 版本号与变更记录');
   G.el('fatal').hidden = true;
   G.UI.setPaused(false);
 
-  // 变更记录本身
-  ok(cl.indexOf('## [0.0.1]') >= 0, 'CHANGELOG 记录了 0.0.1');
-  ok(cl.indexOf('Keep a Changelog') >= 0, 'CHANGELOG 说明了书写格式与版本规则');
+  // 变更记录本身：新格式 = 版本行 + 分类行（--xx）+ 条目行（-xx），块之间空两行，版本之间用 ==== 分区
+  ok(cl.indexOf('v0.0.1') >= 0, 'CHANGELOG 保留了首个版本');
+  ok(/^--[^\s-]/m.test(cl), 'CHANGELOG 使用 --分类 的排版');
+  ok(/^-/m.test(cl), 'CHANGELOG 的条目以 - 开头');
+  ok(cl.indexOf('v' + G.VERSION) < cl.indexOf('v0.0.1'), '最新版本排在旧版本之前');
+  const und = cl.indexOf('未发布');
+  ok(und < 0 || und < cl.indexOf('v' + G.VERSION), '未发布的改动写在最新版本之前');
+  ok(/\n\n\n/.test(cl), 'CHANGELOG 的块之间留有空行');
+  ok(/^={10,}$/m.test(cl), 'CHANGELOG 用长串 = 分区不同版本');
+  // 旧格式的完整历史归档（放在 filebackup/ 下，根目录也认）
+  const oldPath = ['filebackup/changelog-old.md', 'changelog-old.md']
+    .map((p) => path.join(__dirname, '..', p))
+    .filter((p) => fs.existsSync(p))[0];
+  ok(!!oldPath, '旧版变更记录归档为 filebackup/changelog-old.md');
 
   report('版本号与变更记录校验通过');
 }
@@ -3491,7 +3514,7 @@ section('19. Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / �
 
   /* ---------- 第 6 条：深渊布局 ---------- */
   {
-    let bad = [], totalCorr = 0, totalRooms = 0;
+    let bad = [], totalCorr = 0, totalRooms = 0, totalCorrLen = 0, corrSpawnTotal = 0, corrSpawnFloors = 0, totalMonAll = 0, totalDia = 0, themeSeen = {};
     for (let floor = 1; floor <= 25; floor++) {
       const rng = G.RNG(9000 + floor);
       const m = G.Dungeon.generate(rng, { floor, diffIdx: Math.min(5, floor % 6) });
@@ -3509,9 +3532,98 @@ section('19. Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / �
       rooms.forEach((r) => {
         if (r.x < 1 || r.y < 1 || r.x + r.w > m.w - 1 || r.y + r.h > m.h - 1) bad.push('第' + floor + '层房间越界');
       });
+      // 房间数：跟着格子数走 —— 小地图（9 格）4~6 间，最大的图（16 格）9~11 间
+      if (rooms.length !== m.targetRooms) bad.push('第' + floor + '层房间数不等于目标 ' + rooms.length + '/' + m.targetRooms);
+      if (m.targetRooms < 4 || m.targetRooms > 12) bad.push('第' + floor + '层目标房间数越界 ' + m.targetRooms);
+      if (m.cells <= 9 && m.targetRooms > 6) bad.push('第' + floor + '层小地图房间过多 ' + m.targetRooms);
+      // 区域风格：合法性 + 装饰与发光物都要符合该风格
+      const th = G.DATA.themeById(m.theme);
+      themeSeen[m.theme] = (themeSeen[m.theme] || 0) + 1;
+      if (!G.DATA.ABYSS_THEMES.some((x) => x.id === m.theme)) bad.push('第' + floor + '层区域风格非法 ' + m.theme);
+      if (!G.Render.wall[th.wall]) bad.push('第' + floor + '层墙体画法非法 ' + th.wall);
+      m.decor.forEach((d) => {
+        if (th.decor.indexOf(d.kind) < 0) bad.push('第' + floor + '层装饰 ' + d.kind + ' 不符风格 ' + m.theme);
+      });
+      if (!m.torches.length) bad.push('第' + floor + '层没有发光物');
+      m.torches.forEach((x) => {
+        if (x.kind !== th.light) bad.push('第' + floor + '层发光物 ' + x.kind + ' ≠ ' + th.light);
+        if (x.hue !== th.lightHue || x.color !== th.lightColor) bad.push('第' + floor + '层发光物配色不符风格');
+        if (x.r < th.lightR[0] - 0.01 || x.r > th.lightR[1] + 0.01) bad.push('第' + floor + '层发光物半径越界');
+      });
+      // 连接结构：不能串成一条长链，要有分叉
+      const rk = (r) => r.gx + ',' + r.gy;
+      const adj = {};
+      rooms.forEach((r) => { adj[rk(r)] = []; });
+      (m.links || []).forEach((l) => {
+        const A = l.ax + ',' + l.ay, B = l.bx + ',' + l.by;
+        if (!adj[A] || !adj[B]) { bad.push('第' + floor + '层连接指向不存在的房间'); return; }
+        adj[A].push(B); adj[B].push(A);
+      });
+      if ((m.links || []).length !== m.corridors.length) bad.push('第' + floor + '层走廊数与连接数不符');
+      if (Object.keys(adj).filter((k) => adj[k].length >= 3).length < 1) bad.push('第' + floor + '层连接没有分叉');
+      const bfs = (start) => {
+        const dist = {}; dist[start] = 0;
+        const q = [start];
+        while (q.length) {
+          const cur = q.shift();
+          (adj[cur] || []).forEach((n) => { if (dist[n] === undefined) { dist[n] = dist[cur] + 1; q.push(n); } });
+        }
+        return dist;
+      };
+      const d1 = bfs(rk(rooms[0]));
+      if (Object.keys(d1).length !== rooms.length) bad.push('第' + floor + '层房间连接图不连通');
+      let farKey = rk(rooms[0]), fd = -1;
+      Object.keys(d1).forEach((k) => { if (d1[k] > fd) { fd = d1[k]; farKey = k; } });
+      const d2 = bfs(farKey);
+      let dia = 0;
+      Object.keys(d2).forEach((k) => { if (d2[k] > dia) dia = d2[k]; });
+      totalDia += dia;
+      // 一条链的直径 = 房间数 - 1；有分叉的树会短得多
+      if (dia > rooms.length - 1) bad.push('第' + floor + '层连接像一条长链（直径 ' + dia + '/' + rooms.length + '）');
       // 走廊数量与房间数同量级（不再是一堆乱路）
       if (m.corridors.length > rooms.length * 2 + 3) bad.push('第' + floor + '层走廊过多 ' + m.corridors.length);
       if (m.corridors.length < rooms.length - 1) bad.push('第' + floor + '层走廊过少 ' + m.corridors.length);
+      // 走廊要短：只挖相邻房间之间那段空隙，不能横穿地图
+      m.corridors.forEach((c) => {
+        const len = (c.x1 === c.x2 ? Math.abs(c.y2 - c.y1) : Math.abs(c.x2 - c.x1)) + 1;
+        totalCorrLen += len;
+        if (len < 2) bad.push('第' + floor + '层走廊过短 ' + len);
+        if (len > 14) bad.push('第' + floor + '层走廊过长 ' + len);
+      });
+      // 房间大小要适中：太小走廊会拉长，太大又会占满整个格子
+      rooms.forEach((r) => {
+        const area = r.w * r.h;
+        if (area < 40 || area > 520) bad.push('第' + floor + '层房间面积异常 ' + r.w + 'x' + r.h);
+      });
+      // 每层怪物总量仍走原来那条曲线（房间变小变多，但总量不变）
+      const totalMon = m.spawns.filter((s) => s.kind !== 'prop').length;
+      totalMonAll += totalMon;
+      if (totalMon < 10 + floor * 0.8 || totalMon > 30 + floor * 2.2) {
+        bad.push('第' + floor + '层怪物总量偏离曲线 ' + totalMon);
+      }
+      // 走廊地砖不能落在房间地板上（走廊与房间不重叠）
+      const roomTiles = new Set();
+      rooms.forEach((r) => {
+        for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) roomTiles.add(y * m.w + x);
+      });
+      (m.corridorTiles || []).forEach((i) => { if (roomTiles.has(i)) bad.push('第' + floor + '层走廊压在房间上'); });
+      // 走廊两端都必须接在房间里 —— 不留通往空地的死路走廊
+      const adjRoom = (x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some((d) => roomTiles.has((y + d[1]) * m.w + (x + d[0])));
+      m.corridors.forEach((c) => {
+        if (!adjRoom(c.x1, c.y1) || !adjRoom(c.x2, c.y2)) bad.push('第' + floor + '层走廊端点没接房间');
+      });
+      // 走廊里会刷少量怪（数量少、而且确实站在走廊地砖上）
+      const cs = m.spawns.filter((s) => s.corridor);
+      if (cs.length) corrSpawnFloors++;
+      corrSpawnTotal += cs.length;
+      if (cs.length > 4) bad.push('第' + floor + '层走廊怪过多 ' + cs.length);
+      const corrSet = new Set(m.corridorTiles || []);
+      cs.forEach((sp) => {
+        if (!corrSet.has(sp.ty * m.w + sp.tx)) bad.push('第' + floor + '层走廊怪不在走廊上');
+        if (rooms.some((r) => sp.tx >= r.x && sp.tx < r.x + r.w && sp.ty >= r.y && sp.ty < r.y + r.h)) {
+          bad.push('第' + floor + '层走廊怪站在房间里');
+        }
+      });
       // 起点是角落房间，出口是离起点最远的房间
       const st = m.rooms[0];
       let cornerScore = 1e9;
@@ -3539,10 +3651,101 @@ section('19. Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / �
       if (!seen[idx(ex, ey)]) bad.push('第' + floor + '层出口不可达');
       // 所有房间中心都能走到
       rooms.forEach((r) => { if (!seen[idx(r.cx, r.cy)]) bad.push('第' + floor + '层有房间走不到'); });
+      // 走廊地砖也都得通（说明走廊两端真的接上了房间）
+      (m.corridorTiles || []).forEach((i) => { if (!seen[i]) bad.push('第' + floor + '层有走廊地砖走不到'); });
+      // 挖完之后不该有任何走不到的地板砖：不然就是留下一段没人用的死路
+      let floorN = 0, seenN = 0;
+      for (let i = 0; i < m.tiles.length; i++) if (m.tiles[i] === 1) { floorN++; if (seen[i]) seenN++; }
+      if (floorN !== seenN) bad.push('第' + floor + '层有走不到的地板 ' + (floorN - seenN) + ' 格');
+      if (rooms.length < 4) bad.push('第' + floor + '层房间过少 ' + rooms.length);
     }
-    ok(bad.length === 0, '1-25 层布局：房间不重叠、全连通、出口可达', bad.slice(0, 3).join(' / '));
+    ok(bad.length === 0, '1-25 层布局：房间不重叠、走廊短且两端接房间、无死路、全连通', bad.slice(0, 3).join(' / '));
     ok(totalCorr / totalRooms < 1.9, '走廊与房间数量比例合理（不是一堆乱路）',
       (totalCorr / totalRooms).toFixed(2) + ' 条/间');
+    ok(totalCorrLen / totalCorr <= 7, '走廊平均长度够短（≤7 格）',
+      (totalCorrLen / totalCorr).toFixed(1) + ' 格');
+    ok(totalMonAll / 25 >= 20 && totalMonAll / 25 <= 70, '每层怪物总量仍在原曲线上',
+      (totalMonAll / 25).toFixed(1) + ' 只/层');
+    ok(totalDia / 25 <= 6, '房间连接是带分叉的树（平均直径 ≤6，长链会接近房间数）',
+      (totalDia / 25).toFixed(1) + ' 跳');
+    // 区域风格：多层跑下来应该出现多种
+    ok(Object.keys(themeSeen).length >= 3, '多层会随机出现多种区域风格',
+      Object.keys(themeSeen).map((k) => G.DATA.themeById(k).name + '×' + themeSeen[k]).join(' '));
+    // 四种风格各渲染一遍，不能抛错
+    const gt = new G.Game(31415);
+    G.GAME = gt; G.UI.game = gt;
+    gt.player = G.ENT.makePlayer(gt, 'barb');
+    G.Stats.derive(gt.player);
+    let themeRenderBad = [];
+    G.DATA.ABYSS_THEMES.forEach((th) => {
+      let tmap = null;
+      for (let i = 0; i < 80 && !tmap; i++) {
+        const cand = G.Dungeon.generate(G.RNG(700 + i * 13), { floor: 1 + i, diffIdx: 0 });
+        if (cand.theme === th.id) tmap = cand;
+      }
+      if (!tmap) { themeRenderBad.push(th.id + ' 未抽到'); return; }
+      gt.map = tmap; gt.area = 'dungeon';
+      try { G.Render.draw(gt); } catch (e) { themeRenderBad.push(th.id + ':' + e.message); }
+    });
+    ok(themeRenderBad.length === 0, '四种区域风格都能渲染', themeRenderBad.join(' / ') || '无问题');
+    // 墙体画法：四种画法都在，每种都能单独跑（石砖 / 密林 / 冰川 / 崎岖岩石）
+    ok(['block', 'forest', 'glacier', 'rocky'].every((k) => typeof G.Render.wall[k] === 'function'),
+      '四种墙体画法都注册在 R.wall 上', Object.keys(G.Render.wall).join(','));
+    let wallBad = [];
+    const wallCtx = G.Render.ctx || G.el('game').getContext('2d');
+    G.DATA.ABYSS_THEMES.forEach((th) => {
+      const pal = G.Render.palette(3, th.id);
+      for (let k = 0; k < 4; k++) {
+        try { G.Render.wall[th.wall](wallCtx, k * 44, 0, pal, 0.4, { down: k === 3, right: false, left: false, up: false }); }
+        catch (e) { wallBad.push(th.wall + ':' + e.message); }
+      }
+    });
+    ok(wallBad.length === 0, '四种墙体画法都能单独绘制', wallBad.join(' / ') || '无问题');
+    // 块体要跨过格子边界：不然又会变成「一格一块」的网格感（原来冰川就是这样）
+    const recPoly = (fn, pal) => {
+      const out = [];
+      let cur = null;
+      const rc = {
+        fillStyle: '#000', strokeStyle: '#000', lineWidth: 1,
+        beginPath() { cur = []; },
+        moveTo(x, y) { if (cur) cur.push([x, y]); },
+        lineTo(x, y) { if (cur) cur.push([x, y]); },
+        closePath() { },
+        arc(x, y, r) { if (cur) cur.push([x - r, y - r], [x + r, y + r]); },
+        fill() { if (cur && cur.length) out.push(cur); cur = null; },
+        fillRect() { }, stroke() { }, save() { }, restore() { },
+      };
+      fn(rc, 0, 0, pal, 0.4, { down: false, right: false, left: false, up: false });
+      return out;
+    };
+    const overflow = {};
+    G.DATA.ABYSS_THEMES.forEach((th) => {
+      if (th.wall === 'block') return;
+      const pts = recPoly(G.Render.wall[th.wall], G.Render.palette(3, th.id));
+      overflow[th.wall] = pts.some((poly) => poly.some((p) => p[0] < -1 || p[0] > 45 || p[1] < -1 || p[1] > 45));
+    });
+    ok(Object.keys(overflow).length === 3 && Object.keys(overflow).every((k) => overflow[k]),
+      '密林 / 冰川 / 岩石的块体会跨过格子边界（不会退回网格感）',
+      Object.keys(overflow).map((k) => k + ':' + (overflow[k] ? '√' : '×')).join(' '));
+    ok(G.DATA.ABYSS_THEMES.every((th) => ['block', 'forest', 'glacier', 'rocky'].indexOf(th.wall) >= 0),
+      '每种区域风格都指定了墙体画法',
+      G.DATA.ABYSS_THEMES.map((th) => th.name + ':' + th.wall).join(' '));
+    ok(corrSpawnTotal > 0 && corrSpawnTotal <= 25 * 4, '走廊里会刷少量怪',
+      corrSpawnTotal + ' 只 / ' + corrSpawnFloors + ' 层');
+    // BOSS 层的竞技场不能压在别的房间上
+    let arenaHit = [];
+    [5, 10, 15, 20, 25].forEach((floor) => {
+      const m = G.Dungeon.generate(G.RNG(555 + floor), { floor, diffIdx: 0 });
+      const a = m.arena;
+      if (!a) { arenaHit.push('第' + floor + '层没有竞技场'); return; }
+      m.rooms.forEach((r) => {
+        if (r === m.stairsRoom) return;
+        if (a.x <= r.x + r.w - 1 && a.x + a.w - 1 >= r.x && a.y <= r.y + r.h - 1 && a.y + a.h - 1 >= r.y) {
+          arenaHit.push('第' + floor + '层竞技场压房间');
+        }
+      });
+    });
+    ok(arenaHit.length === 0, 'BOSS 竞技场没有和别的房间重叠', arenaHit.join(' / '));
   }
 
   /* ---------- 第 7 条：只缓存当前层 ---------- */
@@ -3566,6 +3769,8 @@ section('19. Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / �
     const cache = g.serializeFloor();
     ok(cache && cache.floor === 7, '能序列化当前层', cache && cache.floor);
     ok(typeof cache.map.tiles === 'string' && cache.map.tiles.length === g.map.w * g.map.h, '地图用紧凑字符串保存');
+    const theme0 = g.map.theme;
+    ok(!!theme0 && cache.map.theme === theme0, '楼层缓存里带着区域风格', theme0 + ' / ' + cache.map.theme);
 
     // 回城 → 再进同一层：原样恢复
     g.toTown('portal');
@@ -3579,6 +3784,7 @@ section('19. Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / �
     ok(Math.abs(g.player.x - px0) < 1, '玩家位置恢复', Math.round(g.player.x) + ' vs ' + Math.round(px0));
     ok(g.props.length === cache.props.length, '可破坏物数量一致');
     ok(g.monsters.every((m) => m.def), '恢复出来的怪物定义完整');
+    ok(g.map.theme === theme0, '回到同一层，区域风格不变', theme0 + ' → ' + g.map.theme);
     ok(g.monsters.filter((m) => m.dead).length >= 3, '已死的怪物仍然是死的',
       g.monsters.filter((m) => m.dead).length);
 
@@ -3671,8 +3877,57 @@ section('19. Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / �
     F.clear();
     const heavy = L.makeItem(g.rng, { ilvl: 60, slot: 'chest', rarity: 'rare' });
     heavy.req = { level: 40, str: 90 };
-    F.addRule({ action: 'hide', enabled: true, conds: [{ type: 'reqStr', op: '>=', value: 80 }] });
-    ok(F.decide(heavy, {}).state === 'hide', '按属性需求匹配');
+    F.addRule({ action: 'hide', enabled: true, conds: [{ type: 'reqAttr', op: '>=', value: 80 }] });
+    ok(F.decide(heavy, {}).state === 'hide', '按需求属性匹配（力量 / 敏捷 / 智力取最高）');
+    const dexOnly = L.makeItem(g.rng, { ilvl: 40, slot: 'chest', rarity: 'rare' });
+    dexOnly.req = { level: 10, dex: 55 };
+    ok(F.decide(dexOnly, {}).state === 'hide', '只看敏捷的装备也能被「需求属性」命中');
+    F.clear();
+
+    // 细则表：名称包含已移除，力量 / 敏捷 / 智力合并成需求属性
+    ok(!F.hasCond('name') && !F.COND_TYPES.some((c) => c.name.indexOf('名称') >= 0), '「名称包含」已移除');
+    ok(!F.hasCond('reqStr') && !F.hasCond('reqDex') && !F.hasCond('reqInt'), '力量 / 敏捷 / 智力三条已合并');
+    ok(F.hasCond('reqAttr') && F.condType('reqAttr').name === '需求属性', '合并为「需求属性」');
+    ok(F.condType('reqAttr').attrPick === true && F.ATTR_OPTIONS.length === 4, '「需求属性」可以选力量 / 敏捷 / 智力');
+    ok(F.attrOf({}) === 'any' && F.attrOf({ attr: 'str' }) === 'str', '属性选择的默认值是「任意」');
+    ok(F.clampValue('reqAttr', 1e9) === 99999, '需求属性的范围到 99999', String(F.condType('reqAttr').max));
+    // 选中具体属性时只看那一项
+    const strGuy = L.makeItem(g.rng, { ilvl: 30, slot: 'chest', rarity: 'rare' });
+    strGuy.req = { level: 10, str: 90 };
+    const dexGuy = L.makeItem(g.rng, { ilvl: 30, slot: 'chest', rarity: 'rare' });
+    dexGuy.req = { level: 10, dex: 90 };
+    F.clear();
+    F.addRule({ action: 'hide', enabled: true, conds: [{ type: 'reqAttr', attr: 'str', op: '>=', value: 80 }] });
+    ok(F.decide(strGuy, {}).state === 'hide' && F.decide(dexGuy, {}).state === 'normal',
+      '选中「力量」时只看力量，不看敏捷');
+    ok(F.ruleText(F.data.rules[0]).indexOf('力量') >= 0, '规则摘要会写清选中的属性', F.ruleText(F.data.rules[0]));
+    F.clear();
+    F.addRule({ action: 'hide', enabled: true, conds: [{ type: 'reqAttr', attr: 'any', op: '>=', value: 80 }] });
+    ok(F.decide(strGuy, {}).state === 'hide' && F.decide(dexGuy, {}).state === 'hide',
+      '选「任意」时三项取最高');
+    F.clear();
+    // 数值细则：默认 0 + 带取值范围
+    const numConds = F.COND_TYPES.filter((c) => c.value === 'number');
+    ok(numConds.length >= 6, '数值细则数量', numConds.length);
+    ok(numConds.every((c) => c.min === 0 && c.max > 0), '数值细则都带 0 ~ 上限的范围',
+      numConds.map((c) => c.name + ':' + c.min + '-' + c.max).join(' '));
+    ok(F.NUM_DEFAULT === 0, '数值细则默认值是 0', F.NUM_DEFAULT);
+    ok(F.clampValue('sockets', 99) === 4 && F.clampValue('sockets', -3) === 0, '孔位数被夹在 0~4',
+      F.clampValue('sockets', 99) + '/' + F.clampValue('sockets', -3));
+    ok(F.clampValue('quality', 250) === 100 && F.clampValue('affixCount', 9) === 6, '品质 / 词缀条数也被夹住');
+    ok(F.clampValue('ilvl', 'abc') === 0, '输入不是数字时回到默认值 0', F.clampValue('ilvl', 'abc'));
+    ok(F.clampValue('rarity', 'rare') === 'rare', '非数值细则不受影响');
+    // 老数据迁移：力量 / 敏捷 / 智力 → 需求属性，名称包含丢弃
+    const migrated = F.migrateConds([
+      { type: 'reqStr', op: '>=', value: 80 },
+      { type: 'name', op: 'has', value: '剑' },
+      { type: 'sockets', op: '>=', value: 99 },
+    ]);
+    ok(migrated.length === 2 && migrated[0].type === 'reqAttr' && migrated[0].value === 80,
+      '老细则 reqStr 迁移成 reqAttr');
+    ok(migrated[1].type === 'sockets' && migrated[1].value === 4, '迁移时顺手把越界数值夹回范围');
+    ok(F.importText(JSON.stringify({ rules: [{ action: 'hide', conds: [{ type: 'reqDex', op: '>=', value: 30 }] }] })).ok === true &&
+      F.data.rules[0].conds[0].type === 'reqAttr', '导入老格式的过滤器也能用');
     F.clear();
     F.addRule({ action: 'show', enabled: true, conds: [{ type: 'sockets', op: '>=', value: 2 }] });
     const socked = L.makeItem(g.rng, { ilvl: 30, slot: 'chest', rarity: 'rare' });
@@ -3713,13 +3968,87 @@ section('19. Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / �
     UI_clearUpCache();
     G.UI.refreshFilterViews();
     ok(G.UI.cellClass(common).indexOf('flt-hide') >= 0, '被隐藏的格子带 flt-hide 类', G.UI.cellClass(common));
-    ok(G.UI.cellInner(common).indexOf('flt-hidden') >= 0, '被隐藏的格子显示淡化的叉');
+    ok(G.UI.cellInner(common).indexOf('flt-hidden') < 0 && G.UI.cellInner(common).indexOf('✕') < 0,
+      '被隐藏的格子不再画叉');
+    ok(/<span/.test(G.UI.cellInner(common)), '被隐藏的格子照常显示装备图标');
+    ok(G.UI.filterHidden(common) === true && G.UI.filterHidden(rare) === false,
+      'filterHidden 只认「隐藏」的装备');
     ok(G.UI.cellClass(rare).indexOf('flt-show') >= 0, '高亮的格子带 flt-show 类');
     ok(G.UI.cellInner(rare).indexOf('flt-mark') >= 0, '高亮的格子有标记');
     ok(G.UI.cellClass(null).indexOf('empty') >= 0, '空格子不受影响');
-    G.UI.filterReveal = true;
-    ok(G.UI.cellClass(common).indexOf('flt-hide') < 0, '临时显示开关能看回被隐藏的物品');
-    G.UI.filterReveal = false;
+
+    // 长按「显示全部装备」（默认 X，可改键）：按住期间才算显示状态，松手立刻恢复
+    const holdReveal = () => G.input.simulate(G.Settings.getBind('revealFilter'));
+    const releaseReveal = () => G.input.simulateUp(G.Settings.getBind('revealFilter'));
+    releaseReveal();
+    ok(G.UI.revealHeld() === false, '没按住时不处于显示状态');
+    holdReveal();
+    ok(G.UI.revealHeld() === true, '按住显示键时进入显示状态');
+    ok(G.UI.filterHidden(common) === true, '长按状态不改变过滤器本身的判定');
+    ok(G.UI.cellClass(common).indexOf('flt-hide') >= 0, '长按期间背包格子仍是暗色边框');
+    releaseReveal();
+    ok(G.UI.revealHeld() === false, '松手后恢复普通状态');
+
+    // 地面掉落：平时既不画也不捡；长按显示键才画出来、才点得到，但 F 照样不捡
+    const hiddenDrop = L.makeItem(g.rng, { ilvl: 20, slot: 'chest', rarity: 'common' });
+    const shownDrop = L.makeItem(g.rng, { ilvl: 20, slot: 'chest', rarity: 'rare' });
+    const pkHidden = { kind: 'pickup', x: p.x, y: p.y, item: hiddenDrop, bob: 0, life: 600, r: 10 };
+    const pkShown = { kind: 'pickup', x: p.x, y: p.y, item: shownDrop, bob: 0, life: 600, r: 10 };
+    g.pickups.push(pkHidden, pkShown);
+    ok(G.UI.filterHidden(hiddenDrop) === true, '地面上的隐藏装备会被拦下');
+    ok(g.pickupAt(p.x, p.y, 40) === pkShown, '平时点不到被隐藏的掉落（只点得到留下的那件）');
+    g.pickupNearby();
+    ok(g.pickups.indexOf(pkHidden) >= 0, 'F 拾取不会捡起被隐藏的装备');
+    ok(g.pickups.indexOf(pkShown) < 0, '没被隐藏的装备照常捡起');
+    ok(p.inventory.filter((x) => x && x.uid === hiddenDrop.uid).length === 0, '隐藏装备没进背包');
+    ok(g.collectPickup(pkHidden) === false, '直接调 collectPickup 也不捡隐藏装备');
+
+    holdReveal();
+    ok(g.pickupAt(p.x, p.y, 40) === pkHidden, '长按显示键后能点中被隐藏的掉落');
+    ok(g.collectPickup(pkHidden) === false, '长按期间 F / 自动吸取仍然不捡隐藏装备');
+    releaseReveal();
+    ok(g.collectPickup(pkHidden) === false, '松手后点击路径也不再捡');
+    holdReveal();
+    ok(g.collectPickup(pkHidden, true) === true, '长按显示键时鼠标点过来的那一次才捡得起来');
+    releaseReveal();
+    ok(p.inventory.some((x) => x && x.uid === hiddenDrop.uid), '被点起来的隐藏装备进了背包');
+    g.pickups.length = 0;
+    ok(G.UI.revealHeld() === false, '测试结束回到「没按住」状态');
+
+    // 导入 / 导出：文本框平时藏在小窗里，点按钮才弹出
+    const htmlSrc = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+    const ioAt = htmlSrc.indexOf('id="filter-io"');
+    const taAt = htmlSrc.indexOf('id="filter-json"');
+    ok(ioAt >= 0 && taAt > ioAt, '文本框放在「导入 / 导出」小窗里');
+    ok(htmlSrc.slice(taAt, htmlSrc.indexOf('</section>', taAt)).indexOf('btn-filter-io-ok') >= 0,
+      '小窗里有确认按钮');
+    ok(/id="filter-io" hidden/.test(htmlSrc), '小窗默认是隐藏的');
+    ok(htmlSrc.indexOf('id="btn-filter-copy"') < 0, '面板上不再直接摆一个文本框和一个复制按钮');
+    ok(htmlSrc.indexOf('id="btn-filter-reveal"') < 0, '过滤器面板里不再有「临时显示被隐藏的物品」按钮');
+    ok(htmlSrc.indexOf('id="ubtn-reveal"') < 0 && htmlSrc.indexOf('data-act="revealFilter"') < 0,
+      '右下角功能栏的「全显」按钮已移除');
+    ok(htmlSrc.indexOf('data-key="revealFilter"') >= 0, '帮助面板里保留长按说明');
+    const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'js', 'ui.js'), 'utf8');
+    ok(uiSrc.indexOf('toggleFilterReveal') < 0 && uiSrc.indexOf('已显示全部装备') < 0,
+      '按 X 不再弹出开关式文字提示');
+    G.UI.openFilterIO('export');
+    ok(G.el('filter-io').hidden === false, '点「导出」弹出小窗');
+    ok(G.el('filter-json').value.indexOf('"rules"') >= 0, '小窗里是当前过滤器的 JSON 文本');
+    ok(G.el('btn-filter-io-ok').textContent === '复制', '导出时确认按钮是「复制」');
+    ok(G.UI.filterIOConfirm() === true, '导出确认不会出错');
+    ok(G.UI.closeFilterIO() === true && G.el('filter-io').hidden === true, '关掉小窗');
+    ok(G.UI.closeFilterIO() === false, '已经关掉的小窗再关一次不会出问题');
+    G.UI.openFilterIO('import');
+    ok(G.el('btn-filter-io-ok').textContent === '导入' && G.el('filter-json').value === '',
+      '导入小窗是空文本框，确认按钮是「导入」');
+    G.el('filter-json').value = '{"rules":[]}';
+    ok(G.UI.filterIOConfirm() === true && F.data.rules.length === 0, '小窗里能直接导入');
+    ok(G.el('filter-io').hidden === true, '导入成功后小窗自动关闭');
+    // 导入会把规则整份换掉，这里恢复成上面那两条，后面还要用
+    F.clear();
+    F.addRule({ action: 'hide', enabled: true, conds: [{ type: 'rarity', op: 'is', value: 'common' }] });
+    F.addRule({ action: 'show', enabled: true, conds: [{ type: 'rarity', op: 'is', value: 'rare' }] });
+    ok(F.data.rules.length === 2, '导入测试后恢复规则');
 
     // 面板渲染
     G.UI.togglePanel('panel-filter', true);
@@ -3734,6 +4063,42 @@ section('19. Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / �
     ok(F.data.rules[0].conds[0].value === 'rare', '面板上移规则生效');
     G.UI.filterClick({ target: { dataset: { rule: '0', act: 'del' } } });
     ok(F.data.rules.length === 1, '面板删除规则生效');
+
+    // 每一种细则类型都要能渲染出输入控件（「装备类型」曾因数据表没导出把整个面板弄崩）
+    F.clear();
+    F.COND_TYPES.forEach((ct) => F.addRule({
+      action: 'hide', enabled: true,
+      conds: [{ type: ct.id, op: ct.ops[0].id, value: ct.value === 'number' ? 0 : 'true' }],
+    }));
+    let condErr = null;
+    try { G.UI.renderFilter(); } catch (e) { condErr = e.message; }
+    ok(condErr === null, '所有细则类型都能渲染出输入控件', condErr || '');
+    const cards = Array.prototype.slice.call(G.el('filter-rules').children);
+    ok(cards.length === F.COND_TYPES.length, '每种细则各有一张规则卡', cards.length);
+    // 数值细则的输入框带 min / max（越界会被浏览器 + clamp 双重拦住）
+    const numCard = cards.filter((c) => String(c.innerHTML).indexOf('flt-num') >= 0);
+    ok(numCard.length === F.COND_TYPES.filter((c) => c.value === 'number').length,
+      '数值细则都渲染成数字输入框', numCard.length + ' 个');
+    ok(numCard.every((c) => /min="0"/.test(String(c.innerHTML)) && /max="\d+"/.test(String(c.innerHTML)) &&
+      /step="1"/.test(String(c.innerHTML))), '数字输入框都带 min / max / step');
+    ok(numCard.some((c) => /max="4"/.test(String(c.innerHTML))), '孔位数的输入框上限是 4');
+    // 「需求属性」除了数字框，还带一个属性下拉（用它自己那张卡来查）
+    const reqCard = cards.filter((c) => String(c.innerHTML).indexOf('value="reqAttr" selected') >= 0)[0];
+    ok(!!reqCard && /data-field="attr"/.test(String(reqCard.innerHTML)) &&
+      String(reqCard.innerHTML).indexOf('>力量<') >= 0 && String(reqCard.innerHTML).indexOf('>智力<') >= 0,
+      '「需求属性」细则里有力量 / 敏捷 / 智力的下拉');
+    // 面板上把越界数值写回数据时会被夹住
+    G.UI.filterEdit({ target: { dataset: { rule: '0', cond: '0', field: 'value' }, value: '99999' } });
+    ok(F.data.rules[0].conds[0].value <= 100, '面板写入越界数值会被夹回范围',
+      F.data.rules[0].conds[0].type + '=' + F.data.rules[0].conds[0].value);
+    // 「装备类型」那条：武器 / 副手 / 护甲三张表都要列出来（副手是盾牌、护甲是头盔、武器是剑）
+    const typeCard = cards.filter((c) => String(c.innerHTML).indexOf('value="shield"') >= 0)[0];
+    ok(!!typeCard, '「装备类型」下拉里有副手项（盾牌）');
+    ok(!!typeCard && typeCard.innerHTML.indexOf('>盾牌<') >= 0 &&
+      typeCard.innerHTML.indexOf('>头盔<') >= 0 && typeCard.innerHTML.indexOf('>剑<') >= 0,
+      '「装备类型」下拉同时含武器 / 副手 / 护甲三类');
+    ok(!!(G.DATA.WEAPON_TYPES && G.DATA.OFFHAND_TYPES && G.DATA.ARMOR_TYPES), '武器 / 副手 / 护甲三张类型表都已导出');
+
     G.UI.togglePanel('panel-filter', false);
     F.clear();
     F.save();
@@ -3761,6 +4126,19 @@ section('19. Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / �
     G.Settings.setBind('attack', 'MouseRight');
     ok(G.UI.modeDesc('mouse').indexOf('鼠标右键') >= 0, '改回去后说明也回退');
     G.Settings.setBind('craft', 'KeyG');
+
+    // 「显示全部装备」：长按动作 + 默认 X + 可改键 + 设置面板里有这一行
+    const rf = G.Settings.ACTIONS.filter((a) => a.id === 'revealFilter')[0];
+    ok(!!rf, '动作表里有「长按显示全部装备（过滤器）」');
+    ok(G.Settings.getBind('revealFilter') === 'KeyX', '默认绑定 X', G.Settings.getBind('revealFilter'));
+    G.Settings.setBind('revealFilter', 'KeyZ');
+    ok(G.Settings.actionLabel('revealFilter') === 'Z', '改成 Z 后标签跟着变');
+    G.UI.renderSettings();
+    const rows = Array.prototype.slice.call(G.el('bind-list').children);
+    ok(rows.some((r) => String(r.innerHTML).indexOf('显示全部装备') >= 0),
+      '设置面板的按键列表里有这一行', rows.length + ' 行');
+    G.Settings.setBind('revealFilter', 'KeyX');
+    ok(G.Settings.actionLabel('revealFilter') === 'X', '改回 X');
 
     // 技能栏角标
     G.Settings.setMode('mouse');
@@ -3812,7 +4190,9 @@ section('19. Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / �
     ok(/\.gear-doll\{[^}]*grid-template-columns:repeat\(3,1fr\)/.test(css), '装备栏是 3 列网格');
     ok(/\.slot-equip\{[^}]*aspect-ratio:1 \/ 1/.test(css), '背包装备栏格子接近正方形（aspect-ratio 1:1）');
     ok(!/\.slot-equip\{[^}]*min-height:64px/.test(css), '不再用固定高度把格子拉成长方形');
-    ok(/\.doll\.gear-doll\{[^}]*max-width/.test(css), '装备栏限宽，保证格子是方的');
+    ok(/\.gear-doll\{[^}]*max-width/.test(css), '装备栏限宽，保证格子是方的');
+    ok(/\.craft-gear \.slot-equip\.bench-on/.test(css) && css.indexOf('.cg-slot') < 0,
+      '做装工坊的装备栏复用同一套 .slot-equip（旧的 .cg-slot 已移除）');
     const want = { helm: [1, 2], gloves: [2, 1], chest: [2, 2], amulet: [2, 3], weapon: [3, 1], belt: [3, 2], offhand: [3, 3], ring1: [4, 1], boots: [4, 2], ring2: [4, 3] };
     let missing = [];
     Object.keys(want).forEach((slot) => {
@@ -3849,12 +4229,35 @@ section('19. Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / �
     const emptyCell = cells.filter((c) => c.className.indexOf('empty') >= 0)[0];
     ok(emptyCell && emptyCell.className.indexOf('empty') >= 0, '空槽位带 empty 类（虚线边框）');
     ok(emptyCell.innerHTML.indexOf(' · 空') >= 0, '空槽位显示「部位 · 空」');
-    // 做装工坊的装备栏也带 data-slot
+    // 做装工坊的装备栏：同一套方形格子（.slot-equip）+ data-slot
     G.UI.togglePanel('panel-craft', true);
     const cg = G.el('craft-gear');
-    ok(cg.children.length === D.SLOTS.length, '做装工坊装备栏格子数一致', cg.children.length);
-    ok(Array.prototype.slice.call(cg.children).every((c) => c.dataset.slot), '做装工坊装备栏也带 data-slot');
+    const cgCells = Array.prototype.slice.call(cg.children);
+    ok(cgCells.length === D.SLOTS.length, '做装工坊装备栏格子数一致', cgCells.length);
+    ok(cgCells.every((c) => c.dataset.slot), '做装工坊装备栏也带 data-slot');
+    ok(cgCells.every((c) => c.className.indexOf('slot-equip') >= 0 &&
+      c.innerHTML.indexOf('class="g"') >= 0 && c.innerHTML.indexOf('class="nm"') >= 0),
+      '做装工坊装备栏与背包是同一套方形格子（部位图标 + 名称）',
+      cgCells[0] && cgCells[0].className);
     G.UI.togglePanel('panel-craft', false);
+  }
+
+  /* ---------- 第 5b 条：过滤器面板的导入 / 导出小窗与暗色边框 ---------- */
+  {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+    ok(/\.flt-io\{[^}]*position:absolute/.test(css) && /\.flt-io\[hidden\]\{display:none\}/.test(css),
+      '导入 / 导出小窗是盖在面板上的一层，隐藏时不占位');
+    const ioBox = css.match(/\.flt-io-box\{[^}]*\}/);
+    ok(ioBox && ioBox[0].indexOf('max-width') >= 0, '小窗里的文本框有固定宽度',
+      ioBox ? ioBox[0].slice(0, 60) : 'none');
+    const fh = css.match(/\.cell\.flt-hide\{[^}]*\}/);
+    ok(fh && /border-color:#[0-9a-f]{6}/i.test(fh[0]) && fh[0].indexOf('opacity') < 0,
+      '被隐藏的格子改成暗色边框，不再整体淡化', fh ? fh[0] : 'none');
+    ok(css.indexOf('.flt-hidden') < 0, '删掉了画叉用的样式');
+    ok(css.indexOf('.cell.cant-equip .up-mark') < 0, '红框不再藏起绿色上三角');
+    ok(css.indexOf('.ubtn.on') < 0, '「全显」按钮的高亮样式已随按钮一起移除');
+    ok(css.indexOf('.cell.cant-equip{') > css.indexOf('.cell.upgrade{'),
+      '红框规则排在绿框之后：同时命中时以红框为准');
   }
 
   report('Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / 技能收益 / 过滤器 / 按键提示 全部通过');
@@ -4007,7 +4410,8 @@ const mustHave = ['game', 'hud', 'skillbar', 'minimap', 'orb-life', 'orb-mana', 
   'bind-warn', 'btn-bind-reset', 'btn-sound', 'btn-menu-settings',
   'held-gem', 'gem-pull-list', 'gem-pull-count', 'btn-gem-pull-all', 'held-orb', 'panel-respec',
   'panel-skill', 'sk-tree', 'guide-say', 'rift-diffs', 'panel-filter', 'filter-rules', 'filter-json',
-  'filter-enabled', 'filter-count', 'btn-filter'];
+  'filter-enabled', 'filter-count', 'btn-filter',
+  'btn-hpbar', 'btn-manabar', 'btn-dodgebar'];
 const missing2 = mustHave.filter((id) => !htmlIds.has(id));
 ok(missing2.length === 0, 'HTML 关键元素齐全', missing2.join(', '));
 // CSS 引用的类是否在 JS/HTML 中出现过（粗查）
@@ -4018,6 +4422,195 @@ const usedInHtml = html + jsAll;
 const unused = [...cssClasses].filter((c) => usedInHtml.indexOf(c) < 0);
 ok(unused.length < 30, 'CSS 类基本都有使用（未使用 ' + unused.length + ' 个）', unused.slice(0, 12).join(', '));
 report('DOM 引用一致：' + htmlIds.size + ' 个 id，JS 引用 ' + refs.size + ' 个，全部匹配');
+
+/* ============================================================ */
+section('21. 闪避充能 / 替换基础闪避 / 头顶状态条');
+{
+  /* ---- 两个新后缀 ---- */
+  const ac = D.affixById.s_dodgeCharges, ar = D.affixById.s_dodgeRecharge;
+  ok(!!ac && !!ar, '新增后缀「闪避充能次数」「闪避恢复时间」');
+  ok(ac.kind === 'suffix' && ar.kind === 'suffix' && ac.stat === 'dodgeCharges' && ar.stat === 'dodgeRecharge',
+    '两个后缀的类型与属性键正确', ac.stat + ' / ' + ar.stat);
+  ok(ac.slots.join() === 'boots' && ar.slots.join() === 'boots' && ac.noRing === true && ar.noRing === true,
+    '只出现在靴子上（戒指也不会补上）', ac.slots + ' / ' + ar.slots);
+  ok(D.affixesForSlot('boots', 'suffix').indexOf(ac) >= 0 && D.affixesForSlot('ring', 'suffix').indexOf(ac) < 0 &&
+    D.affixesForSlot('chest', 'suffix').indexOf(ar) < 0, '靴子后缀池有它们，戒指 / 胸甲没有');
+  ok(ac.tiers.every((t) => Math.round(t.min) === Math.round(t.max)),
+    '充能档位取整后稳定（掷出的数值不会被抹成前一档）', ac.tiers.map((t) => t.min + '~' + t.max).join(' '));
+  ok(ac.tiers.every((t) => 1 + Math.round(t.max) <= 4) && 1 + Math.round(ac.tiers[ac.tiers.length - 1].max) === 4,
+    '充能格数最高 4（基础 1 + 词缀 3）', ac.tiers.map((t) => 1 + Math.round(t.max)).join(','));
+  ok(ar.tiers[0].max === 6 && ar.tiers[ar.tiers.length - 1].max === 30, '恢复时间档位 6% → 30%');
+  ok(D.statText('dodgeCharges', 2) === '闪避充能 +2 次', '充能词缀的说明文本', D.statText('dodgeCharges', 2));
+  ok(D.statText('dodgeRecharge', 18.3).indexOf('-18.3%') >= 0, '恢复时间词缀写成「减少」', D.statText('dodgeRecharge', 18.3));
+  ok(D.STATS.dodgeCharges.kind === 'flat' && D.STATS.dodgeRecharge.kind === 'pct', '两条属性已登记进 D.STATS');
+
+  /* ---- 三个位移技能的 25 级分支 ---- */
+  [['barb', 'barb_leap'], ['sorc', 'sorc_teleport'], ['rogue', 'rogue_shadow']].forEach(([cls, sid]) => {
+    const br = D.skillBranches(sid)[25];
+    const sw = br.filter((b) => b.mods && b.mods.swapDodge)[0];
+    ok(br.length === 3 && !!sw && sw.name === '替换基础闪避', cls + ' 的位移技能 25 级分支含「替换基础闪避」',
+      br.map((b) => b.name).join(' / '));
+    ok(!!sw && sw.text.length > 0 && sw.text[0].indexOf('闪避键') >= 0 && sw.icon === '⤢',
+      cls + ' 的分支说明与图标完整', sw && (sw.text[0] + ' | ' + sw.icon));
+  });
+
+  /* ---- 充能数学（走真实装备，验证 词缀 → S.derive → 充能） ---- */
+  const g = new G.Game(20240607);
+  G.GAME = g; G.UI.game = g;
+  g.startClass('rogue', 0);
+  const giveBoots = (pl, ch, rc) => {
+    pl.gear.boots = {
+      cat: 'equip', slot: 'boots', name: '测试之靴', rarity: 'rare', ilvl: 80, implicit: [], gems: [],
+      affixes: [
+        { id: 's_dodgeCharges', stat: 'dodgeCharges', value: ch == null ? 3.4 : ch },
+        { id: 's_dodgeRecharge', stat: 'dodgeRecharge', value: rc == null ? 18 : rc },
+      ],
+    };
+    S.derive(pl);
+  };
+  const p = g.player;
+  ok(p.dodgeCharge === null, '新建角色还没有充能（首次更新补满）');
+  ok(S.dodgeMax(p) === 1 && Math.abs(S.dodgeRechargeTime(p) - 2) < 0.001, '默认 1 格、2 秒回满', S.dodgeRechargeTime(p));
+  ok(S.dodgeSwapSkill(p) === null, '没选分支时闪避键不替换');
+  giveBoots(p);
+  ok(S.dodgeMax(p) === 4, '词缀 +3 → 4 格充能', S.dodgeMax(p));
+  ok(Math.abs(p.stats.dodgeRechargeMul - 0.82) < 0.001, '恢复时间 -18% → 系数 0.82', p.stats.dodgeRechargeMul);
+  ok(Math.abs(S.dodgeRechargeTime(p) - 2 * 0.82) < 0.001, '基础闪避回充 = 2 × 0.82', S.dodgeRechargeTime(p));
+  p.gear.boots.affixes[1].value = 999;
+  S.derive(p);
+  ok(Math.abs(p.stats.dodgeRechargeMul - 0.4) < 0.001, '恢复时间最多只减 60%', p.stats.dodgeRechargeMul);
+  p.gear.boots.affixes[1].value = 18;
+
+  const sid = 'rogue_shadow';
+  p.skills[sid] = 25;
+  p.skillBranches = {};
+  p.skillBranches[sid] = { 25: sid + ':25:1' };
+  S.derive(p);
+  ok(S.dodgeSwapSkill(p) === sid, '选了「替换基础闪避」→ 闪避键替换成影袭');
+  ok(Math.abs(S.dodgeRechargeTime(p) - 5 * 0.82) < 0.01, '回充时间改用技能冷却（5 秒）', S.dodgeRechargeTime(p));
+  p.gear.amulet = {
+    cat: 'equip', slot: 'amulet', name: '测试护符', rarity: 'rare', ilvl: 80, implicit: [], gems: [],
+    affixes: [{ id: 's_cdr', stat: 'cdr', value: 20 }],
+  };
+  S.derive(p);
+  ok(Math.abs(S.dodgeRechargeTime(p) - 5 * 0.8 * 0.82) < 0.01, '技能冷却受冷却缩减影响', S.dodgeRechargeTime(p));
+  p.gear.amulet = null;
+  S.derive(p);
+  p.skills[sid] = 20;
+  ok(S.dodgeSwapSkill(p) === null, '技能等级掉下 25 → 分支失效、恢复翻滚');
+  p.skills[sid] = 25;
+
+  /* ---- 冷却绕行 + 闪避键真的改放技能 ---- */
+  g.enterFloor(1);
+  const p2 = g.player;
+  giveBoots(p2);
+  p2.skills[sid] = 25;
+  p2.skillBranches = {};
+  p2.skillBranches[sid] = { 25: sid + ':25:1' };
+  p2.mana = 999;
+  S.derive(p2);
+  p2.cds[sid] = 5;
+  const aimPt = { x: p2.x + 200, y: p2.y };
+  ok(G.Skills.cast(g, p2, sid, aimPt) === false, '冷却中：技能栏施放被拦下');
+  ok(G.Skills.cast(g, p2, sid, aimPt, { ignoreCd: true }) === true, '冷却中：闪避键（ignoreCd）能放出来');
+  ok(p2.cds[sid] > 0, '放完照样进冷却（技能栏照常显示）');
+
+  const key = G.Settings.getBind('dodge');
+  const aimFn = g.aimWorld;
+  g.aimWorld = () => ({ x: p2.x + 150, y: p2.y });
+  p2.dodgeCharge = 2; p2.cds[sid] = 0; p2.dodgeTimer = 0;
+  const from = { x: p2.x, y: p2.y };
+  G.input.simulate(key);
+  g.update(1 / 60);
+  G.input.simulateUp(key);
+  ok(p2.dodgeTimer <= 0, '替换后按闪避不再走翻滚位移', p2.dodgeTimer);
+  ok(Math.abs(p2.dodgeCharge - 1) < 0.05, '释放消耗 1 格充能并开始回充', p2.dodgeCharge);
+  ok(G.dist(from.x, from.y, p2.x, p2.y) > 20 || p2.cds[sid] > 0, '影袭确实被释放出来了',
+    '位移 ' + G.dist(from.x, from.y, p2.x, p2.y).toFixed(1));
+
+  /* 没选分支 → 依旧是翻滚；充能不足 → 按了没反应 */
+  const p3 = g.player;
+  giveBoots(p3);
+  p3.skillBranches = {};
+  S.derive(p3);
+  p3.dodgeCharge = 2; p3.dodgeTimer = 0;
+  G.input.simulate(key);
+  g.update(1 / 60);
+  G.input.simulateUp(key);
+  ok(p3.dodgeTimer > 0, '没选分支时闪避键仍是翻滚');
+  ok(Math.abs(p3.dodgeCharge - 1) < 0.05, '翻滚同样消耗 1 格充能', p3.dodgeCharge);
+  p3.dodgeTimer = 0; p3.dodgeCharge = 0.2;
+  G.input.simulate(key);
+  g.update(1 / 60);
+  G.input.simulateUp(key);
+  ok(p3.dodgeTimer <= 0, '充能不足时按闪避没有反应');
+  /* 充能会随时间回满 */
+  p3.dodgeCharge = 0;
+  p3.invuln = 60;                    // 免得练功房里的怪把小号打死、充能停在半路
+  const dmax3 = S.dodgeMax(p3);
+  for (let i = 0; i < Math.ceil(S.dodgeRechargeTime(p3) * dmax3 * 60) + 4; i++) g.update(1 / 60);
+  ok(p3.dodgeCharge >= dmax3 - 0.001, '时间过后充能回满', p3.dodgeCharge + ' / ' + dmax3);
+  g.aimWorld = aimFn;
+
+  /* ---- 头顶血条 / 蓝条 + 脚下闪避条 ---- */
+  const shot = [];
+  const recCtx = {
+    fillStyle: '#000', strokeStyle: '#000', shadowColor: '#000', shadowBlur: 0, globalAlpha: 1,
+    fillRect(x, y, w, h) {
+      [x, y, w, h].forEach((v) => { if (!Number.isFinite(v)) throw new Error('状态条画出了非有限数'); });
+      shot.push([x, y, w, h]);
+    },
+  };
+  G.Settings.data.hpBar = true; G.Settings.data.manaBar = true; G.Settings.data.dodgeBar = true;
+  G.Render.drawPlayerBars(recCtx, p2);
+  const head = shot.filter((r) => r[1] < p2.y), feet = shot.filter((r) => r[1] > p2.y);
+  ok(head.length === 6, '头顶两根条（各含底槽、内槽与填充）', head.length);
+  const pipX = new Set(feet.filter((r) => r[3] === 4).map((r) => Math.round(r[0] * 100) / 100));
+  ok(pipX.size === 4, '脚下按充能格数画出 4 格', pipX.size);
+  ok(feet.filter((r) => r[3] === 6).length === 1, '脚下闪避条带 1 条整体底槽');
+  p2.dodgeCharge = 0.5;
+  shot.length = 0;
+  G.Render.drawPlayerBars(recCtx, p2);
+  const half = shot.filter((r) => Math.abs(r[3] - 4) < 0.001 && r[2] < 7);
+  ok(half.length === 1 && Math.abs(half[0][2] - 4) < 0.001, '正在回充的格子按比例填充',
+    half.length + ' 块 / ' + (half[0] && half[0][2]));
+  p2.dodgeCharge = p2.stats.dodgeMax;
+  const hp = head[0], mana = head[4];
+  const barY = p2.y - (p2.jumpHeight || 0);
+  ok(hp[1] < mana[1], '血条在上、蓝条在下', hp[1] + ' < ' + mana[1]);
+  ok(Math.abs(hp[0] + hp[2] / 2 - p2.x) < 0.001 && Math.abs(mana[1] + mana[3] - (barY - 26)) < 0.001,
+    '状态条水平居中并贴在人物头顶上方', mana[1] + '~' + (mana[1] + mana[3]));
+  G.Settings.data.hpBar = false; G.Settings.data.manaBar = false; G.Settings.data.dodgeBar = false;
+  shot.length = 0;
+  G.Render.drawPlayerBars(recCtx, p2);
+  ok(shot.length === 0, '三个开关全关后什么都不画');
+  G.Settings.data.hpBar = true; G.Settings.data.manaBar = true; G.Settings.data.dodgeBar = true;
+  p2.life = 1;
+  shot.length = 0;
+  G.Render.drawPlayerBars(recCtx, p2);
+  const hpFill = shot[2];
+  ok(hpFill[2] < 6 && hpFill[2] >= 1, '残血时血条只剩一小截（且至少 1 像素）', hpFill[2].toFixed(2));
+  p2.life = p2.stats.maxLife;
+
+  /* ---- 设置项本身 ---- */
+  ok(G.Settings.SHOWS.map((s) => s.name).join('|') ===
+    '在人物头顶显示血条|在人物头顶显示蓝条|在人物脚下显示闪避条', '设置面板的三项名称正确',
+    G.Settings.SHOWS.map((s) => s.name).join('|'));
+  const dflt = G.Settings.defaults();
+  ok(dflt.hpBar === true && dflt.manaBar === true && dflt.dodgeBar === true, '三项默认开启');
+  G.Settings.setShow('hpBar', false);
+  G.Settings.save();
+  ok(G.Settings.load().hpBar === false, '开关会存进 localStorage');
+  G.UI.renderSettings();
+  ok(G.el('btn-hpbar').textContent.indexOf('关') >= 0 && G.el('btn-manabar').textContent.indexOf('开') >= 0,
+    '设置面板上的按钮会显示当前状态', G.el('btn-hpbar').textContent);
+  G.Settings.setShow('hpBar', true);
+  G.Settings.save();
+  ok(G.Settings.show('hpBar') === true && G.Settings.setShow('不存在的项', true) === false,
+    '开关可以改回来，非法键被拒绝');
+  report('闪避充能：1 格基础 + 词缀最多 3 格，回充受「闪避恢复时间」与技能冷却影响，闪避键可改放位移技能');
+}
+
 
 /* 源码编码检查：防止编辑器/脚本把中文写坏成乱码 */
 const encFiles = fs.readdirSync(path.join(__dirname, '..', 'js')).map((f) => 'js/' + f)

@@ -178,7 +178,8 @@
       }
       if (near) { this.log('附近还有敌人，无法使用回城（先脱离战斗）。', 'c-boss'); G.audio.play('noskill'); return false; }
     }
-    const left = this.pickups.filter((pk) => pk.item && pk.item.cat === 'equip').length;
+    const left = this.pickups.filter((pk) => pk.item && pk.item.cat === 'equip' &&
+      !G.UI.filterHidden(pk.item)).length;
     if (left) this.log('你离开了地牢，地上遗留的 ' + left + ' 件装备被深渊吞没了。', 'dim');
     this.floorCache = this.serializeFloor();      // 记住这一层，回来时原样恢复
     this.enterTown({});
@@ -223,7 +224,7 @@
     return {
       floor: this.floor, diffIdx: this.diffIdx, mlvl: this.mlvl,
       map: {
-        w: m.w, h: m.h, floor: m.floor, isBoss: m.isBoss,
+        w: m.w, h: m.h, floor: m.floor, isBoss: m.isBoss, theme: m.theme || null,
         tiles: u8ToStr(m.tiles), variant: u8ToStr(m.variant),
         rooms: m.rooms, corridors: m.corridors, torches: m.torches, decor: m.decor,
         wallTiles: m.wallTiles, spawns: m.spawns,
@@ -259,6 +260,7 @@
     this.floor = cache.floor;
     this.diffIdx = G.clamp(cache.diffIdx | 0, 0, D.MAX_DIFF);
     this.mlvl = cache.mlvl || G.mlvlOf(this.floor, this.diffIdx);
+    m.theme = m.theme || (D.ABYSS_THEMES[0] && D.ABYSS_THEMES[0].id);   // 老缓存没有风格字段时兜底
     this.map = m;
 
     this.explored = strToU8(cache.explored || '', m.w * m.h);
@@ -565,21 +567,28 @@
     return best;
   };
 
+  /* 鼠标能点到哪个掉落物：被过滤器隐藏的平时点不到，
+   * 但长按「显示全部装备」键时能点（点过去之后也只是「这一次」能捡，见 collectPickup） */
   Game.prototype.pickupAt = function (x, y, r) {
     let best = null, bd = 1e9;
+    const reveal = G.UI.revealHeld();
     for (let i = 0; i < this.pickups.length; i++) {
       const pk = this.pickups[i];
+      if (!reveal && G.UI.filterHidden(pk.item)) continue;
       const d = G.dist(x, y, pk.x, pk.y);
       if (d < (r || 22) && d < bd) { bd = d; best = pk; }
     }
     return best;
   };
 
-  Game.prototype.collectPickup = function (pk) {
+  /* force = true 只由「长按显示键 + 鼠标点地上的装备」这条路径传入 */
+  Game.prototype.collectPickup = function (pk, force) {
     const i = this.pickups.indexOf(pk);
     if (i < 0) return false;
     const it = pk.item;
     const p = this.player;
+    // 被过滤器判为「隐藏」的装备一律不捡：走近自动吸取、F 拾取都拦在这里
+    if (!force && G.UI.filterHidden(it)) return false;
     // 背包空间检查（必须在移除之前，背包满时物品留在地上）
     if (it.cat === 'equip' || it.cat === 'gem') {
       if (G.UI.firstEmpty() < 0) {
@@ -624,13 +633,16 @@
       G.log('拾取 [' + G.RARITY_NAME[it.rarity] + '] ' + L.displayName(it), cls);
       if (it.rarity === 'unique' || it.rarity === 'rare') G.FX.nova(this, pk.x, pk.y, 70, G.RARITY_COLOR[it.rarity], 0.5);
     }
+    return true;
   };
 
+  /* F / 拾取键：只捡「没被过滤器隐藏」的东西（隐藏的在 collectPickup 里还会再拦一次） */
   Game.prototype.pickupNearby = function () {
     const p = this.player;
     const R2 = p.stats.pickup * 2.4;
     for (let i = this.pickups.length - 1; i >= 0; i--) {
       const pk = this.pickups[i];
+      if (G.UI.filterHidden(pk.item)) continue;    // 被过滤器隐藏的装备不会被捡走
       if (G.dist(p.x, p.y, pk.x, pk.y) <= R2) this.collectPickup(pk);
     }
   };
@@ -674,6 +686,7 @@
     if (inp.pressed('Escape')) {
       if (G.UI.heldGem) G.UI.releaseGem();
       else if (G.UI.heldOrb) G.UI.releaseOrb();
+      else if (G.UI.closeFilterIO()) { /* 先关掉过滤器面板里的导入 / 导出小窗 */ }
       else if (G.UI.open) G.UI.togglePanel(G.UI.open, false);
       else G.UI.setPaused(!this.paused);
     }

@@ -631,8 +631,9 @@
     return it.color || '#ffe9a8';
   };
 
-  /* 装备后评分会提升？（等级 / 属性不满足的不算）
-   * 结果按「装备方案 + 等级 + 攻速」缓存，避免每次刷新背包都重复评分。 */
+  /* 装备后评分会提升？
+   * 等级 / 属性暂时不够也照样算——评分是装备本身的价值，绿箭头提示「将来换上更值」，
+   * 穿不穿得上由红框单独表示。结果按「装备方案 + 等级 + 攻速」缓存，避免每次刷新背包都重复评分。 */
   UI._upCache = { sig: '', map: {} };
   function upgradeSig(p) {
     let s = p.level + '|' + (p.stats ? (p.stats.aps | 0) : 0) + '|';
@@ -640,7 +641,6 @@
     return s;
   }
   UI.isUpgradeRaw = function (it, p) {
-    if (UI.canEquip(it)) return false;
     // 有空戒指位 → 直接可提升
     if (it.slot === 'ring' && (!p.gear.ring1 || !p.gear.ring2)) return true;
     // L.compare 已经算上了「双手武器 ⇄ 副手」互斥导致的损失；
@@ -687,17 +687,30 @@
   };
 
   /* ---------------- 装备过滤器接入 ----------------
-   * 隐藏的物品仍然占格、仍然能点，只是画成很淡的样子；
-   * 高亮的物品描一圈颜色，方便一眼挑出来。 */
-  UI.filterReveal = false;      // 「临时显示被隐藏的物品」开关
+   * 「隐藏」不再把格子画成叉：背包 / 仓库里照常显示，只在外圈加一道暗色边框；
+   * 地面上的隐藏掉落默认既不画也不捡，只有长按「显示全部装备」键时才看得见、点得到。
+   * 高亮的物品描一圈绿边，方便一眼挑出来。 */
   UI.filterStateOf = function (it) {
     if (!it || it.cat !== 'equip' || !G.Filter) return { state: 'normal', index: -1 };
     const p = UI.game && UI.game.player;
+    if (!p) return { state: 'normal', index: -1 };      // 还没有角色时一律正常显示
     const ctx = {
-      stats: p ? p.stats : null,
+      stats: p.stats || null,
       canEquip: !UI.canEquip(it),
     };
     return G.Filter.decide(it, ctx);
+  };
+
+  /* 这东西是不是被过滤器判为「隐藏」——只看规则，不看长按状态 */
+  UI.filterHidden = function (it) {
+    return UI.filterStateOf(it).state === 'hide';
+  };
+
+  /* 是否正长按着「显示全部装备」键（默认 X，可在设置里改键）。
+   * 按住期间：地面上的隐藏掉落照常画出来，也能用鼠标点它们；
+   * 松手立刻恢复。注意 F / 走近自动吸取不看这个状态——它们永远只捡没被过滤器隐藏的装备。 */
+  UI.revealHeld = function () {
+    return !!(G.Settings && G.Settings.down('revealFilter'));
   };
 
   /* ============================================================
@@ -731,37 +744,17 @@
       UI.renderFilter();
       UI.filterMsg('已清空全部规则。');
     });
-    const rev = el('btn-filter-reveal');
-    if (rev) rev.addEventListener('click', () => {
-      UI.filterReveal = !UI.filterReveal;
-      rev.textContent = UI.filterReveal ? '恢复隐藏的物品' : '临时显示被隐藏的物品';
-      UI.refreshFilterViews();
-    });
     const exp = el('btn-filter-export');
-    if (exp) exp.addEventListener('click', () => {
-      const ta = el('filter-json');
-      if (ta) ta.value = G.Filter.exportText();
-      UI.filterMsg('已导出到文本框，复制走即可备份。');
-    });
+    if (exp) exp.addEventListener('click', () => UI.openFilterIO('export'));
     const imp = el('btn-filter-import');
-    if (imp) imp.addEventListener('click', () => {
-      const ta = el('filter-json');
-      const r = G.Filter.importText(ta ? ta.value : '');
-      if (!r.ok) { UI.filterMsg('导入失败：' + r.why, true); return; }
-      UI.refreshFilterViews();
-      UI.renderFilter();
-      UI.filterMsg('导入成功，共 ' + r.rules + ' 条规则。');
-    });
-    const cp = el('btn-filter-copy');
-    if (cp) cp.addEventListener('click', () => {
-      const ta = el('filter-json');
-      const txt = ta && ta.value ? ta.value : G.Filter.exportText();
-      if (ta) ta.value = txt;
-      try {
-        if (root.navigator && root.navigator.clipboard) root.navigator.clipboard.writeText(txt);
-        UI.filterMsg('已复制到剪贴板。');
-      } catch (e) { UI.filterMsg('请手动复制文本框里的内容。', true); }
-    });
+    if (imp) imp.addEventListener('click', () => UI.openFilterIO('import'));
+    const iook = el('btn-filter-io-ok');
+    if (iook) iook.addEventListener('click', () => UI.filterIOConfirm());
+    const iocl = el('btn-filter-io-close');
+    if (iocl) iocl.addEventListener('click', () => UI.closeFilterIO());
+    // 点小窗外的灰底也能关掉
+    const iowrap = el('filter-io');
+    if (iowrap) iowrap.addEventListener('click', (ev) => { if (ev.target === iowrap) UI.closeFilterIO(); });
     // 细则里的输入控件：事件委托，避免每次重建都重新绑定
     const rules = el('filter-rules');
     if (rules) {
@@ -772,11 +765,64 @@
   };
 
   UI.filterMsg = function (txt, bad) {
-    const m = el('filter-msg');
-    if (m) {
-      m.textContent = txt || '';
-      m.style.color = bad ? '#ff8f8f' : '#8ce07a';
+    ['filter-msg', 'filter-io-msg'].forEach((id) => {
+      const m = el(id);
+      if (m) {
+        m.textContent = txt || '';
+        m.style.color = bad ? '#ff8f8f' : '#8ce07a';
+      }
+    });
+  };
+
+  /* ---------------- 导入 / 导出小窗（点按钮才弹出） ---------------- */
+  UI.filterIOMode = null;
+
+  UI.openFilterIO = function (mode) {
+    const box = el('filter-io'), ta = el('filter-json');
+    if (!box || !ta) return;
+    UI.filterIOMode = mode === 'import' ? 'import' : 'export';
+    const imp = UI.filterIOMode === 'import';
+    G.text('filter-io-title', imp ? '导入过滤器' : '导出过滤器');
+    G.text('filter-io-hint', imp
+      ? '把过滤器文本粘贴到下面的框里，再点「导入」——会覆盖当前的启用状态与全部规则。'
+      : '下面就是当前过滤器的文本，点「复制」拿走备份即可。');
+    ta.value = imp ? '' : G.Filter.exportText();
+    ta.placeholder = imp ? '在这里粘贴过滤器文本（Ctrl + V）' : '';
+    const ok = el('btn-filter-io-ok');
+    if (ok) ok.textContent = imp ? '导入' : '复制';
+    UI.filterMsg('');
+    box.hidden = false;
+    if (ta.focus) ta.focus();
+    if (!imp && ta.select) ta.select();     // 导出时直接全选，Ctrl+C 即可拿走
+  };
+
+  UI.closeFilterIO = function () {
+    const box = el('filter-io');
+    if (!box || box.hidden) return false;
+    box.hidden = true;
+    UI.filterIOMode = null;
+    UI.filterMsg('');
+    return true;
+  };
+
+  UI.filterIOConfirm = function () {
+    const ta = el('filter-json');
+    const txt = ta ? ta.value : '';
+    if (UI.filterIOMode === 'import') {
+      const r = G.Filter.importText(txt);
+      if (!r.ok) { UI.filterMsg('导入失败：' + r.why, true); return false; }
+      UI.refreshFilterViews();
+      UI.renderFilter();
+      UI.closeFilterIO();
+      UI.filterMsg('导入成功，共 ' + r.rules + ' 条规则。');
+      return true;
     }
+    try {
+      const w = root.navigator && root.navigator.clipboard ? root.navigator.clipboard.writeText(txt) : null;
+      if (w && w.catch) w.catch(() => { });            // 没权限时不要抛未处理的 Promise
+      UI.filterMsg('已复制到剪贴板。');
+    } catch (e) { UI.filterMsg('请手动复制文本框里的内容。', true); }
+    return true;
   };
 
   // 面板里任何控件改动都会带 data-rule / data-cond 等标记，统一在这里落到数据上
@@ -797,11 +843,16 @@
         cond.type = t.value;
         const nt = G.Filter.condType(cond.type);
         cond.op = nt.ops[0].id;
-        cond.value = nt.value === 'number' ? 20 : nt.value === 'rarity' ? 'rare' : nt.value === 'slot' ? 'weapon'
+        // 数值细则默认 0（不再给 20 这种拍脑袋的默认值）
+        cond.value = nt.value === 'number' ? G.Filter.NUM_DEFAULT : nt.value === 'rarity' ? 'rare' : nt.value === 'slot' ? 'weapon'
           : nt.value === 'bool' ? 'true' : '';
+        if (nt.attrPick) cond.attr = 'any';
       } else if (t.dataset.field === 'op') cond.op = t.value;
+      else if (t.dataset.field === 'attr') cond.attr = G.Filter.attrOf({ attr: t.value });
       else if (t.dataset.field === 'value') {
-        cond.value = G.Filter.condType(cond.type).value === 'number' && !live ? Number(t.value) : t.value;
+        // 数值细则写入前 clamp 到该细则的取值范围（输入框本身也带 min / max）
+        if (G.Filter.condType(cond.type).value === 'number' && !live) cond.value = G.Filter.clampValue(cond.type, t.value);
+        else cond.value = t.value;
         if (live) return;                       // 输入过程中不重绘，避免打断打字
       }
     }
@@ -822,7 +873,7 @@
     else if (act === 'down') G.Filter.moveRule(ri, 1);
     else if (act === 'addCond') {
       const rule = G.Filter.data.rules[ri];
-      if (rule) rule.conds.push({ type: 'ilvl', op: '>=', value: 20 });
+      if (rule) rule.conds.push({ type: 'ilvl', op: '>=', value: G.Filter.NUM_DEFAULT });
     } else if (act === 'delCond') {
       const rule = G.Filter.data.rules[ri];
       if (rule) {
@@ -889,7 +940,8 @@
     const hint = el('filter-hint');
     if (hint) {
       hint.innerHTML = '说明：装备一旦命中某条规则就按该规则处理，<b>不再看后面的规则</b>，所以「想把某类留下」的规则要放在前面。' +
-        '隐藏的物品仍然占着格子、也仍然能点，想临时看它们就按上面的按钮。过滤器对所有存档通用。';
+        '被判定为「隐藏」的装备<b>不会被捡起来</b>（走近自动吸取、F 拾取都不行），地面掉落平时也不显示，' +
+        '背包与仓库里照常显示，只在格子外圈加一道暗色边框表示它不符合过滤器。过滤器对所有存档通用。';
     }
   };
 
@@ -905,27 +957,40 @@
         '<option value="' + r.id + '"' + (r.id === v ? ' selected' : '') + '>' + r.name + '</option>').join('') + '</select>';
     }
     if (t.value === 'type') {
-      return '<select ' + attr + '>' + Object.keys(D.WEAPON_TYPES).concat(Object.keys(D.ARMOR_TYPES)).map((k) => {
-        const label = (D.WEAPON_TYPES[k] || D.ARMOR_TYPES[k] || {}).label || k;
-        return '<option value="' + k + '"' + (k === v ? ' selected' : '') + '>' + label + '</option>';
-      }).join('') + '</select>';
+      // 武器 / 副手 / 护甲三张表；任何一张缺失也不能把整个面板带崩
+      let opts = '';
+      [D.WEAPON_TYPES, D.OFFHAND_TYPES, D.ARMOR_TYPES].forEach((tb) => {
+        Object.keys(tb || {}).forEach((k) => {
+          opts += '<option value="' + k + '"' + (k === v ? ' selected' : '') + '>' +
+            ((tb[k] && tb[k].label) || k) + '</option>';
+        });
+      });
+      return '<select ' + attr + '>' + opts + '</select>';
     }
     if (t.value === 'bool') {
       return '<select ' + attr + '><option value="true"' + (v === true || v === 'true' ? ' selected' : '') + '>是</option>' +
         '<option value="false"' + (v === false || v === 'false' ? ' selected' : '') + '>否</option></select>';
     }
-    if (t.value === 'number') return '<input type="number" class="flt-num" ' + attr + ' value="' + v + '">';
+    if (t.value === 'number') {
+      // 带上取值范围：输入框会拦住越界值，写入前还会再 clamp 一次
+      const num = '<input type="number" class="flt-num" ' + attr + ' min="' + (t.min == null ? 0 : t.min) +
+        '" max="' + (t.max == null ? 99999 : t.max) + '" step="1" value="' + v + '">';
+      // 「需求属性」多一个下拉：选力量 / 敏捷 / 智力 / 任意（取三项最高）
+      if (!t.attrPick) return num;
+      const attrSel = 'data-rule="' + ri + '" data-cond="' + ci + '" data-field="attr"';
+      const cur = G.Filter.attrOf(cond);
+      return '<select ' + attrSel + '>' + G.Filter.ATTR_OPTIONS.map((a) =>
+        '<option value="' + a.id + '"' + (a.id === cur ? ' selected' : '') + '>' + a.name + '</option>').join('') +
+        '</select>' + num;
+    }
     return '<input type="text" class="flt-txt" ' + attr + ' value="' + String(v) + '" placeholder="例如：暴击 / 生命 / 抗性">';
   };
 
-  /* 背包 / 仓库格子的统一内容（图标 + 孔位菱形 + 数量 + 提升标识） */
+  /* 背包 / 仓库格子的统一内容（图标 + 孔位菱形 + 数量 + 提升标识）
+   * 被过滤器隐藏的装备照常显示，只在格子外圈加一道暗色边框（见 .flt-hide） */
   UI.cellInner = function (it) {
     if (!it) return '';
     const fs = UI.filterStateOf(it);
-    if (fs.state === 'hide' && !UI.filterReveal) {
-      return '<span class="flt-hidden" title="已被过滤器隐藏（规则 ' + (fs.index + 1) + '：' +
-        G.Filter.ruleText(G.Filter.data.rules[fs.index]) + '）">✕</span>';
-    }
     let html = '<span style="color:' + UI.itemColor(it) + '">' + itemGlyph(it) + '</span>';
     html += UI.socketsHTML(it);
     if (it.cat === 'potion') html += '<span class="cnt">' + (D.POTIONS[it.potion].vals[it.tier]) + '</span>';
@@ -935,16 +1000,17 @@
     return html;
   };
 
-  /* 格子 CSS 类：稀有度 + 通货/宝石 + 无法穿戴的红色边框 + 过滤器状态 */
+  /* 格子 CSS 类：稀有度 + 通货/宝石 + 无法穿戴的红色边框 + 过滤器状态
+   * 「无法穿戴」和「可提升」可以同时存在：红框照旧，绿箭也照常显示 */
   UI.cellClass = function (it) {
     if (!it) return 'cell empty';
     let c = 'cell r-' + it.rarity;
     if (it.cat === 'orb') c += ' orb-cat';
     else if (it.cat === 'gem') c += ' gem-cat gem-t' + (it.tier | 0);
     if (UI.cantEquip(it)) c += ' cant-equip';
-    else if (it.cat === 'equip' && UI.isUpgrade(it)) c += ' upgrade';
+    if (it.cat === 'equip' && UI.isUpgrade(it)) c += ' upgrade';
     const fs = UI.filterStateOf(it);
-    if (fs.state === 'hide' && !UI.filterReveal) c += ' flt-hide';
+    if (fs.state === 'hide') c += ' flt-hide';
     else if (fs.state === 'show') c += ' flt-show';
     return c;
   };
@@ -1556,6 +1622,8 @@
         ['法力偷取', (st.manaSteal || 0).toFixed(1) + '%'],
         ['伤害反弹', Math.round(st.thorns)],
         ['闪避', Math.round(st.dodge) + '%'],
+        ['闪避充能', (st.dodgeMax || 1) + ' 格（' + S.dodgeRechargeTime(p).toFixed(1) + ' 秒 / 格）'],
+        ['闪避键', S.dodgeSwapSkill(p) ? '改为释放「' + (D.SKILLS[S.dodgeSwapSkill(p)].name) + '」' : '翻滚闪避'],
         ['魔法装备掉落', '+' + Math.round(st.mf) + '%'],
         ['金币掉落', '+' + Math.round(st.gf) + '%'],
         ['经验获取', '+' + Math.round(st.xpBonus) + '%'],
@@ -2221,6 +2289,8 @@
     });
     pnl.hidden = !show;
     UI.open = show ? id : null;
+    // 过滤器面板一关，导入 / 导出小窗也跟着关
+    if (id === 'panel-filter' && !show) UI.closeFilterIO();
     // 锚点：只有从 NPC / 深渊之门打开的窗口才会因走远而自动关闭
     UI.anchor = show ? (anchor || null) : null;
     if (show) {
@@ -2662,16 +2732,17 @@
       gearBox.innerHTML = '';
       D.gearSlots().forEach((s) => {
         const it = p.gear[s];
-        const cell = root.document.createElement('div');
         const sl = D.SLOT_BY_ID[s];
-        cell.className = 'cg-slot' + (it ? ' has' : '') + (it && UI.craftUid === it.uid ? ' bench-on' : '');
+        const cell = root.document.createElement('div');
+        /* 与背包装备栏（UI.refreshEquipDoll）用同一套格子：方形 + 部位图标 + 装备名 */
+        cell.className = 'slot-equip' + (it ? ' r-' + it.rarity : ' empty') +
+          (it && UI.craftUid === it.uid ? ' bench-on' : '');
         cell.dataset.slot = s;                    // 与背包装备栏共用同一套排布
-        cell.title = it ? L.displayName(it) : ((sl ? sl.name : s) + ' · 空');
-        cell.innerHTML = '<span class="cg-name">' + (sl ? sl.name : s) + '</span>' +
-          (it
-            ? '<span class="cg-ico" style="color:' + G.RARITY_COLOR[it.rarity] + '">' + itemGlyph(it) + '</span>' +
-              UI.socketsHTML(it)
-            : '<span class="cg-ico dim">·</span>');
+        const nm = it ? L.displayName(it) : ((sl ? sl.name : s) + ' · 空');
+        cell.title = nm;
+        cell.innerHTML = '<span class="g">' + (sl ? sl.glyph : '▪') + '</span>' +
+          '<span class="nm"' + (it ? ' style="color:' + G.RARITY_COLOR[it.rarity] + '"' : '') + '>' + nm + '</span>' +
+          UI.socketsHTML(it);
         if (it) {
           cell.addEventListener('mouseenter', (ev) => UI.tooltip(it, ev, {}));
           cell.addEventListener('mousemove', (ev) => UI.tooltip(it, ev, {}));
@@ -3782,6 +3853,17 @@
       UI.renderSettings();
       if (on) G.audio.play('ui');
     });
+    // 界面显示开关：头顶血条 / 头顶蓝条 / 脚下闪避条
+    G.Settings.SHOWS.forEach((s) => {
+      const b = el('btn-' + s.id.toLowerCase());
+      if (!b) return;
+      if (b.classList) b.classList.add('tgl');
+      b.addEventListener('click', () => {
+        G.Settings.setShow(s.id, !G.Settings.show(s.id));
+        UI.renderSettings();
+        G.audio.play('ui');
+      });
+    });
     UI.bindCapture();
   };
 
@@ -3849,6 +3931,13 @@
     if (lb) lb.textContent = '（' + G.Settings.modeDef().name + '模式下生效）';
     const snd = el('btn-sound');
     if (snd) snd.textContent = '音效：' + (G.Settings.data.audio ? '开' : '关');
+    G.Settings.SHOWS.forEach((s) => {
+      const b = el('btn-' + s.id.toLowerCase());
+      if (!b) return;
+      const on = G.Settings.show(s.id);
+      b.textContent = s.name + '：' + (on ? '开' : '关');
+      b.className = 'btn tgl' + (on ? ' on' : '');
+    });
 
     const list = el('bind-list');
     if (!list) return;

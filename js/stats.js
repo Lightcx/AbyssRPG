@@ -133,6 +133,54 @@
     });
     return out;
   };
+  /* ---------------- 闪避充能 ----------------
+   * 基础闪避 1 格充能、2 秒回满一格。
+   * 「闪避充能次数」词缀加格数；「闪避恢复时间」词缀按百分比缩短回充时间。
+   * 选了 25 级「替换基础闪避」分支后，闪避键改为释放该位移技能，回充时间改用技能冷却。
+   */
+  S.DODGE_BASE_CD = 2;
+  S.MOVE_SKILL = { barb: 'barb_leap', sorc: 'sorc_teleport', rogue: 'rogue_shadow' };
+
+  // 当前生效的「替换基础闪避」位移技能 id（没选 / 技能等级不足 → null）
+  S.dodgeSwapSkill = function (player) {
+    const id = S.MOVE_SKILL[player && player.cls];
+    if (!id || !D.SKILLS[id]) return null;
+    if (S.skillLevel(player, id) <= 0) return null;
+    const b = S.branchActive(player, id, D.BRANCH_STRONG_TIER);
+    return (b && b.mods && b.mods.swapDodge) ? id : null;
+  };
+  // 闪避充能格数上限（至少 1 格）
+  S.dodgeMax = function (player) {
+    const raw = player && player._raw;
+    const extra = raw ? Math.round(Number(raw.dodgeCharges) || 0) : 0;
+    return Math.max(1, 1 + Math.max(0, extra));
+  };
+  // 回复速度系数（「闪避恢复时间」词缀，最多缩短 60%）
+  S.dodgeRechargeMul = function (player) {
+    const raw = player && player._raw;
+    const cut = raw ? G.clamp(Number(raw.dodgeRecharge) || 0, 0, 60) : 0;
+    return 1 - cut / 100;
+  };
+  // 回满一格充能所需秒数
+  S.dodgeRechargeTime = function (player) {
+    const st = (player && player.stats) || {};
+    let base = S.DODGE_BASE_CD;
+    const swap = S.dodgeSwapSkill(player);
+    if (swap) {
+      const shape = S.skillShape(player, D.SKILLS[swap]);
+      base = Math.max(0.5, (shape && shape.cd) || S.DODGE_BASE_CD);
+      base *= 1 - G.clamp(st.cdr || 0, 0, 90) / 100;
+    }
+    const mul = (st.dodgeRechargeMul != null) ? st.dodgeRechargeMul : S.dodgeRechargeMul(player);
+    return Math.max(0.4, base * mul);
+  };
+  // 当前格数（读玩家身上的实时值，缺省视为满格）
+  S.dodgeCharges = function (player) {
+    const max = (player.stats && player.stats.dodgeMax) || S.dodgeMax(player);
+    const cur = (player.dodgeCharge == null) ? max : player.dodgeCharge;
+    return G.clamp(cur, 0, max);
+  };
+
   // 把分支修饰符套用到技能定义上，得到本次施放使用的技能形态
   S.skillShape = function (player, sk) {
     if (!sk) return sk;
@@ -283,6 +331,9 @@
 
     // 生命/法力上限变化时保持比例
     player.stats = st;
+    /* ---- 闪避充能 ---- */
+    st.dodgeMax = S.dodgeMax(player);
+    st.dodgeRechargeMul = S.dodgeRechargeMul(player);
     if (player.life == null) player.life = st.maxLife;
     if (player.mana == null) player.mana = st.maxMana;
     player.life = Math.min(player.life, st.maxLife);

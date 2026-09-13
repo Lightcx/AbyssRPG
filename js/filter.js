@@ -5,7 +5,9 @@
  *  · 最多 20 条规则，靠前的规则优先生效（命中即决定，不再往下看）
  *  · 每条规则可以包含多条「细则」，同一规则内的细则必须全部满足
  *  · 规则动作：显示 / 高亮显示 / 隐藏
- *  · 支持导出、导入（JSON 文本）
+ *  · 「隐藏」的装备：地面上不显示也不捡（自动吸取 / F 拾取 / 点击都拦下），
+ *    背包与仓库里照常显示，只在格子外圈加一道暗色边框
+ *  · 支持导出、导入（JSON 文本），点面板上的按钮才弹出文本框
  * ============================================================ */
 (function (root) {
   'use strict';
@@ -43,10 +45,11 @@
     { id: 'jewelry', name: '戒指 / 项链' },
   ];
 
-  /* 细则类型：ops 决定可用的比较方式，value 决定输入控件 */
+  /* 细则类型：ops 决定可用的比较方式，value 决定输入控件；
+   * 有数值输入的细则用 min / max 限定范围（界面上的输入框也会带上，并在写入前 clamp） */
   F.COND_TYPES = [
     {
-      id: 'ilvl', name: '物品等级', value: 'number',
+      id: 'ilvl', name: '物品等级', value: 'number', min: 0, max: 100,
       ops: [{ id: '>=', name: '≥' }, { id: '<=', name: '≤' }, { id: '==', name: '=' }],
       get: (it) => it.ilvl,
     },
@@ -71,42 +74,33 @@
       get: (it) => (it.affixes || []).map((a) => a.name + ' ' + D.statText(a.stat, a.value) + ' ' + a.stat).join(' | '),
     },
     {
-      id: 'name', name: '名称包含', value: 'text',
-      ops: [{ id: 'has', name: '包含' }, { id: 'not', name: '不含' }],
-      get: (it) => G.Loot.displayName(it),
-    },
-    {
-      id: 'reqLevel', name: '需求等级', value: 'number',
+      id: 'reqLevel', name: '需求等级', value: 'number', min: 0, max: 100,
       ops: [{ id: '>=', name: '≥' }, { id: '<=', name: '≤' }],
       get: (it) => (it.req && it.req.level) | 0,
     },
     {
-      id: 'reqStr', name: '需求力量', value: 'number',
+      // 力量 / 敏捷 / 智力合并成一条：细则里再选具体看哪一项（默认「任意」= 取三者最高）
+      id: 'reqAttr', name: '需求属性', value: 'number', min: 0, max: 99999, attrPick: true,
       ops: [{ id: '>=', name: '≥' }, { id: '<=', name: '≤' }],
-      get: (it) => (it.req && it.req.str) | 0,
+      get: (it, ctx, cond) => {
+        const r = it.req || {};
+        const which = (cond && cond.attr) || 'any';
+        if (which === 'str' || which === 'dex' || which === 'int') return r[which] | 0;
+        return Math.max(r.str | 0, r.dex | 0, r.int | 0);
+      },
     },
     {
-      id: 'reqDex', name: '需求敏捷', value: 'number',
-      ops: [{ id: '>=', name: '≥' }, { id: '<=', name: '≤' }],
-      get: (it) => (it.req && it.req.dex) | 0,
-    },
-    {
-      id: 'reqInt', name: '需求智力', value: 'number',
-      ops: [{ id: '>=', name: '≥' }, { id: '<=', name: '≤' }],
-      get: (it) => (it.req && it.req.int) | 0,
-    },
-    {
-      id: 'affixCount', name: '词缀条数', value: 'number',
+      id: 'affixCount', name: '词缀条数', value: 'number', min: 0, max: 6,
       ops: [{ id: '>=', name: '≥' }, { id: '<=', name: '≤' }, { id: '==', name: '=' }],
       get: (it) => (it.affixes || []).filter((a) => a.kind !== 'unique').length,
     },
     {
-      id: 'quality', name: '词缀品质', value: 'number',
+      id: 'quality', name: '词缀品质', value: 'number', min: 0, max: 100,
       ops: [{ id: '>=', name: '≥' }, { id: '<=', name: '≤' }],
       get: (it) => G.Loot.affixQuality(it),
     },
     {
-      id: 'sockets', name: '孔位数', value: 'number',
+      id: 'sockets', name: '孔位数', value: 'number', min: 0, max: 4,
       ops: [{ id: '>=', name: '≥' }, { id: '<=', name: '≤' }, { id: '==', name: '=' }],
       get: (it) => it.sockets | 0,
     },
@@ -121,14 +115,56 @@
       get: () => false,   // 运行时由 ctx 提供
     },
     {
-      id: 'score', name: '评分', value: 'number',
+      id: 'score', name: '评分', value: 'number', min: 0, max: 99999,
       ops: [{ id: '>=', name: '≥' }, { id: '<=', name: '≤' }],
       get: (it, ctx) => G.Loot.score(it, ctx && ctx.stats),
     },
   ];
   F.condType = (id) => F.COND_TYPES.filter((c) => c.id === id)[0] || F.COND_TYPES[0];
+  F.hasCond = (id) => F.COND_TYPES.some((c) => c.id === id);
   F.rarities = RARITY;
   F.slots = SLOT_GROUPS;
+
+  /* 数值细则的默认值与取值范围：新加的细则默认 0，写入前一律 clamp */
+  F.NUM_DEFAULT = 0;
+  /* 「需求属性」细则里可选的属性 */
+  F.ATTR_OPTIONS = [
+    { id: 'any', name: '任意（取最高）' },
+    { id: 'str', name: '力量' },
+    { id: 'dex', name: '敏捷' },
+    { id: 'int', name: '智力' },
+  ];
+  F.attrOf = (cond) => {
+    const a = cond && cond.attr;
+    return F.ATTR_OPTIONS.some((o) => o.id === a) ? a : 'any';
+  };
+  F.clampValue = function (typeId, v) {
+    const t = F.condType(typeId);
+    if (t.value !== 'number') return v;
+    let n = Math.round(Number(v));
+    if (!isFinite(n)) n = F.NUM_DEFAULT;
+    return G.clamp(n, t.min == null ? 0 : t.min, t.max == null ? 99999 : t.max);
+  };
+  /* 老存档 / 导入的数据换个名字也能用：
+   * 力量 / 敏捷 / 智力 → 需求属性（取三者最高），「名称包含」已废弃 → 丢掉该细则 */
+  F.migrateConds = function (conds) {
+    const list = [];
+    (conds || []).forEach((c) => {
+      if (!c || c.type === 'name') return;
+      let type = c.type;
+      if (type === 'reqStr' || type === 'reqDex' || type === 'reqInt') type = 'reqAttr';
+      if (!F.hasCond(type)) return;
+      const t = F.condType(type);
+      const one = {
+        type: type,
+        op: (t.ops.filter((o) => o.id === c.op)[0] || t.ops[0]).id,
+        value: t.value === 'number' ? F.clampValue(type, c.value) : c.value,
+      };
+      if (t.attrPick) one.attr = F.attrOf(c);
+      list.push(one);
+    });
+    return list;
+  };
 
   F.data = { enabled: true, name: '默认过滤器', rules: [] };
 
@@ -139,7 +175,16 @@
       if (raw) {
         const d = JSON.parse(raw);
         if (d && Array.isArray(d.rules)) {
-          F.data = { enabled: d.enabled !== false, name: d.name || '默认过滤器', rules: d.rules.slice(0, F.MAX_RULES) };
+          F.data = {
+            enabled: d.enabled !== false,
+            name: d.name || '默认过滤器',
+            // 老存档里的细则名（需求力量 / 敏捷 / 智力、名称包含）在这里顺手转换 / 丢弃
+            rules: d.rules.slice(0, F.MAX_RULES).map((r) => ({
+              action: F.ACTIONS.some((a) => a.id === r.action) ? r.action : 'hide',
+              enabled: r.enabled !== false,
+              conds: F.migrateConds(r.conds),
+            })),
+          };
         }
       }
     } catch (e) { /* 坏数据就用默认 */ }
@@ -184,11 +229,7 @@
         rules: d.rules.map((r) => ({
           action: F.ACTIONS.some((a) => a.id === r.action) ? r.action : 'hide',
           enabled: r.enabled !== false,
-          conds: (r.conds || []).map((c) => ({
-            type: F.condType(c.type).id,
-            op: c.op || F.condType(c.type).ops[0].id,
-            value: c.value,
-          })),
+          conds: F.migrateConds(r.conds),
         })),
       };
       F.save();
@@ -209,7 +250,7 @@
 
   F.matchCond = function (item, cond, ctx) {
     const t = F.condType(cond.type);
-    const raw = t.get(item, ctx);
+    const raw = t.get(item, ctx, cond);
     const v = cond.value;
     switch (t.value) {
       case 'number': {
@@ -270,7 +311,9 @@
       if (t.value === 'rarity') val = (RARITY.filter((r) => r.id === c.value)[0] || { name: c.value }).name;
       if (t.value === 'slot') val = (SLOT_GROUPS.filter((r) => r.id === c.value)[0] || { name: c.value }).name;
       if (t.value === 'bool') val = boolOf(c.value) ? '是' : '否';
-      return t.name + ' ' + op + ' ' + val;
+      // 「需求属性」会额外带上选中的那一项（力量 / 敏捷 / 智力 / 任意）
+      const attr = t.attrPick ? ((F.ATTR_OPTIONS.filter((a) => a.id === F.attrOf(c))[0] || {}).name || '') + ' ' : '';
+      return t.name + ' ' + attr + op + ' ' + val;
     });
     return parts.length ? parts.join(' 且 ') : '（没有细则）';
   };

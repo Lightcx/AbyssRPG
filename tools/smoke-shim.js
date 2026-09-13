@@ -23,7 +23,7 @@ function FakeCtx() {
     shadowColor: '#000', shadowBlur: 0, globalCompositeOperation: 'source-over',
     save: noop, restore: noop, setTransform: noop, resetTransform: noop,
     translate: noop, scale: noop, rotate: noop, clearRect: noop,
-    fillRect: noop, strokeRect: noop, beginPath: noop, closePath: noop,
+    fillRect: noop, strokeRect: noop, rect: noop, beginPath: noop, closePath: noop,
     moveTo: noop, lineTo: noop, quadraticCurveTo: noop, bezierCurveTo: noop,
     arc: noop, ellipse: noop, fill: noop, stroke: noop, clip: noop,
     drawImage: noop, setLineDash: noop, putImageData: noop,
@@ -128,6 +128,6 @@ globalThis.document = {
   removeEventListener: noop,
 };
 
-const files = ['core.js', 'data.js', 'loot.js', 'stats.js', 'dungeon.js', 'town.js', 'combat.js', 'entities.js', 'render.js', 'ui.js', 'game.js', 'main.js'];
+const files = ['core.js', 'data.js', 'loot.js', 'stats.js', 'dungeon.js', 'town.js', 'combat.js', 'entities.js', 'render.js', 'filter.js', 'ui.js', 'game.js', 'main.js'];
 files.forEach((f) => require(path.join(__dirname, '..', 'js', f)));
 module.exports = globalThis.G;

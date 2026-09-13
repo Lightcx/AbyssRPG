@@ -216,12 +216,11 @@ b{color:#f0e2c0;font-weight:600}
   text-shadow:0 0 5px rgba(0,0,0,.95),0 1px 2px #000;pointer-events:none;
 }
 .cell.upgrade{border-color:#2f6b34}
-/* 等级 / 属性不足，无法穿戴：红色边框 */
+/* 等级 / 属性不足，无法穿戴：红色边框（红框优先，绿箭头照常显示） */
 .cell.cant-equip{
   border-color:#c0342f;
   box-shadow:inset 0 0 0 1px rgba(255,80,80,.85),0 0 7px rgba(190,40,40,.35);
 }
-.cell.cant-equip .up-mark{display:none}
 .inv-foot{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px}
 .inv-foot b{color:#ffe9a8}
 .btn{
@@ -232,6 +231,8 @@ b{color:#f0e2c0;font-weight:600}
 .btn.big{padding:9px 18px;font-size:13px}
 .btn.danger:hover{border-color:var(--red);color:#ffb3ae}
 .btn[disabled]{opacity:.4;cursor:default}
+.btn.tgl{opacity:.6}
+.btn.tgl.on{opacity:1;border-color:var(--gold);color:#ffe9a8;background:linear-gradient(180deg,#33291c,#1a140f)}
 
 /* 装备栏 */
 /* ================= 装备栏（按参考图排布） =================
@@ -253,8 +254,8 @@ b{color:#f0e2c0;font-weight:600}
 .gear-doll>[data-slot="boots"]{grid-area:4/2/5/3}
 .gear-doll>[data-slot="ring2"]{grid-area:4/3/5/4}
 .doll{margin-bottom:12px}
-/* 背包装备栏：格子做成接近正方形（宽度由列宽决定，高度跟着走） */
-.doll.gear-doll{max-width:282px}
+/* 装备栏：格子做成正方形（宽度由列宽决定，高度跟着走）；背包与做装工坊共用 */
+.gear-doll{max-width:282px}
 .slot-equip{
   position:relative;aspect-ratio:1 / 1;border:1px solid #332b22;border-radius:4px;
   background:linear-gradient(180deg,#1b1611,#0e0b09);
@@ -522,19 +523,18 @@ b{color:#f0e2c0;font-weight:600}
 }
 #tooltip .akind.pre{color:#ffb861;border-color:#7a4a1c;background:rgba(255,140,60,.12)}
 #tooltip .akind.suf{color:#8fd6ff;border-color:#33507f;background:rgba(120,180,255,.12)}
-/* 装备对比：左右两个各自独立的窗口（互不拉伸，中间留一条竖线） */
-#tooltip.wide{max-width:none}
+/* 装备对比：左右（戴两枚戒指时是三个）各自独立成窗，高度互不拉伸。
+ * 外层 #tooltip 不画底也不画框 —— 否则短的那个窗口会被拉成一个空框。 */
+#tooltip.wide{max-width:none;background:none;border:0;box-shadow:none;padding:0}
 #tooltip .twin{display:flex;gap:16px;align-items:flex-start}
 #tooltip .tcol{
   position:relative;width:292px;flex:none;display:flex;flex-direction:column;
-  padding:8px 10px;border:1px solid rgba(200,164,92,.26);border-radius:4px;
-  background:rgba(0,0,0,.22);
+  padding:8px 10px;border:1px solid #5a4a30;border-radius:4px;
+  background:linear-gradient(180deg,rgba(16,13,10,.98),rgba(9,7,6,.98));
+  box-shadow:0 10px 30px rgba(0,0,0,.9);
 }
-#tooltip .tcol + .tcol::before{
-  content:"";position:absolute;left:-9px;top:0;bottom:0;width:1px;background:rgba(200,164,92,.4);
-}
-#tooltip .tcol.old{opacity:.94}
-#tooltip .tcol.new{border-color:rgba(140,224,122,.32)}
+#tooltip .tcol.old{opacity:1}
+#tooltip .tcol.new{border-color:rgba(140,224,122,.42)}
 #tooltip .tcol-hd{
   font-size:11px;letter-spacing:1px;color:#c8a45c;margin-bottom:5px;padding-bottom:3px;
   border-bottom:1px solid rgba(200,164,92,.28);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
@@ -596,17 +596,12 @@ b{color:#f0e2c0;font-weight:600}
 .col-craft-left .grid{max-height:none;overflow:visible}
 .col-craft-left h3{margin-top:12px}
 .col-craft-left h3:first-child{margin-top:0}
-/* 做装工坊的装备栏沿用同一套排布（.gear-doll 提供 3 列与位置） */
-.craft-gear .cg-slot{
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
-  padding:3px 4px 7px;border:1px solid #332b22;border-radius:4px;
-  background:rgba(0,0,0,.25);font-size:11px;cursor:pointer;position:relative;min-height:52px;
-}
-.craft-gear .cg-slot.has:hover{border-color:var(--gold);background:rgba(200,164,92,.08)}
-.craft-gear .cg-slot.bench-on{border-color:var(--gold);box-shadow:0 0 0 1px rgba(200,164,92,.5) inset;background:rgba(200,164,92,.10)}
-.craft-gear .cg-slot .cg-name{color:#8c8272;font-size:10px;line-height:1.2}
-.craft-gear .cg-slot .cg-ico{font-size:17px;line-height:1.05}
-.craft-gear .cg-slot .sockets{position:absolute;left:50%;transform:translateX(-50%);bottom:1px}
+/* 做装工坊的装备栏与背包装备栏完全同一套外观：
+ * .gear-doll 提供 3 列排布与 data-slot 定位，.slot-equip 提供方形格子 */
+.craft-gear{margin-left:auto;margin-right:auto}
+.craft-gear .slot-equip.bench-on{border-color:var(--gold);box-shadow:0 0 0 1px rgba(200,164,92,.5) inset;background:rgba(200,164,92,.10)}
+/* 物品栏为空时的那句提示：占满整行，别被 8 列网格挤成竖排 */
+.col-craft-left .grid>.hint{grid-column:1 / -1}
 .craft-foot{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:11.5px;color:#b8ab90;flex-wrap:wrap}
 .craft-foot #craft-shards{color:#9fe8ff}
 
@@ -684,11 +679,27 @@ b{color:#f0e2c0;font-weight:600}
   width:100%;height:120px;background:#120e0b;border:1px solid #332b22;border-radius:4px;color:#b8ab90;
   font-family:Consolas,monospace;font-size:11px;padding:6px;resize:vertical;
 }
-/* 被过滤器隐藏 / 高亮的格子 */
-.cell.flt-hide{opacity:.34;background:rgba(0,0,0,.45)}
-.cell.flt-hide .flt-hidden{font-size:16px;color:#5a5148}
+/* 被过滤器判为「隐藏」的格子：内容照常显示，只把稀有度光晕换成一道暗色边框 */
+.cell.flt-hide{
+  border-color:#1c1814;
+  box-shadow:inset 0 0 0 1px rgba(76,68,56,.55);
+  background:linear-gradient(180deg,#161310,#0b0908);
+}
 .cell.flt-show{box-shadow:0 0 0 1px #8ce07a inset,0 0 8px rgba(140,224,122,.35)}
 .cell .flt-mark{position:absolute;left:1px;top:0;font-size:10px;color:#8ce07a;text-shadow:0 0 4px #000}
+/* 导入 / 导出小窗：盖在整块过滤器面板上的一层灰底 + 文本框 */
+.flt-io{
+  position:absolute;inset:0;z-index:6;display:flex;align-items:center;justify-content:center;
+  background:rgba(8,5,4,.8);border-radius:6px;
+}
+.flt-io[hidden]{display:none}
+.flt-io-box{
+  width:92%;max-width:620px;padding:12px 14px;border:1px solid #4a3c2a;border-radius:6px;
+  background:linear-gradient(180deg,#241d16,#12100c);box-shadow:0 14px 34px rgba(0,0,0,.65);
+}
+.flt-io-box h3{margin:0 0 6px}
+.flt-io-box .flt-json{height:150px}
+.flt-io-box .flt-foot{margin-top:8px}
 
 /* ================= 铁匠铺 / 分解 ================= */
 #panel-blacksmith{left:50%;top:50%;transform:translate(-50%,-50%);width:660px;max-width:96vw}

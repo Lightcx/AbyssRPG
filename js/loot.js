@@ -756,7 +756,7 @@
     crit: 7, critDmg: 1.5, aps: 5, moveSpeed: 3, dmgPct: 7, physDmg: 3.4, fireDmg: 3.4, coldDmg: 3.4, lightDmg: 3.4, poisonDmg: 3.4,
     addFire: 0.9, addCold: 0.9, addLight: 0.9, addPoison: 0.9, lifeRegen: 1.6, manaRegen: 0.6, lifeOnHit: 0.7, lifeSteal: 12, manaSteal: 9,
     mf: 1.2, gf: 0.3, cdr: 5, areaDmg: 2.2, thorns: 0.2, pickup: 0.2, xpBonus: 0.8, dmgReduce: 9,
-    allSkills: 30, dodge: 4,
+    allSkills: 30, dodge: 4, dodgeCharges: 12, dodgeRecharge: 1.6,
   };
   L.score = function (item, stats) {
     if (!item || item.cat !== 'equip') return 0;

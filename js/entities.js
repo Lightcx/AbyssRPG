@@ -133,7 +133,7 @@
       potions: { life: { tier: 0, count: 3 }, mana: { tier: 0, count: 2 } },
       cds: {}, buffs: [], dots: [],
       x: 0, y: 0, vx: 0, vy: 0, facing: 0,
-      attackTimer: 0, dodgeTimer: 0, dodgeCd: 0, dodgeX: 0, dodgeY: 0,
+      attackTimer: 0, dodgeTimer: 0, dodgeCd: 0, dodgeX: 0, dodgeY: 0, dodgeCharge: null,
       invuln: 0, hurtFlash: 0, animT: 0, walkT: 0, attackAnim: 0, castAnim: 0,
       moveTarget: null, attackTarget: null, pendingPickup: null, pendingNpc: null,
       aimAttack: false, forceAim: false, jump: null,
@@ -219,7 +219,13 @@
       if (G.chance(0.7)) G.FX.afterimage(game, p.x, p.y, p.color);
       return;
     }
-    p.dodgeCd = Math.max(0, p.dodgeCd - dt);
+    // 闪避充能：按「回满一格所需时间」持续积攒，满了就停
+    const dmax = S.dodgeMax(p);
+    const dregen = S.dodgeRechargeTime(p);
+    if (p.dodgeCharge == null) p.dodgeCharge = dmax;
+    p.dodgeCharge = Math.min(dmax, p.dodgeCharge + dt / dregen);
+    // 距离下一格可用还有多久（仅界面显示；满格为 0）
+    p.dodgeCd = p.dodgeCharge >= dmax ? 0 : (1 - (p.dodgeCharge % 1)) * dregen;
 
     /* ---- 输入：移动 ---- */
     const inp = G.input;
@@ -303,7 +309,11 @@
         else {
           const d = G.dist(p.x, p.y, it.x, it.y);
           if (d > st.pickup * 0.6) { moveX = (it.x - p.x) / d; moveY = (it.y - p.y) / d; }
-          else { game.collectPickup(it); p.pendingPickup = null; }
+          else {
+            // 长按「显示全部装备」时用鼠标点过来的隐藏装备：允许捡起这一次
+            game.collectPickup(it, G.UI.revealHeld());
+            p.pendingPickup = null;
+          }
         }
       }
       if (p.pendingNpc && inTown) {
@@ -370,15 +380,25 @@
         if (id && S.skillLevel(p, id) > 0) { p.facing = G.ang(p.x, p.y, aim.x, aim.y); G.Skills.cast(game, p, id, aim); }
         else { G.audio.play('noskill'); G.log('技能未解锁或不可用', 'dim'); }
       }
-      // 翻滚
-      if (SET.pressed('dodge') && p.dodgeCd <= 0) {
-        let dx = moveX, dy = moveY;
-        if (!dx && !dy) { dx = Math.cos(p.facing); dy = Math.sin(p.facing); }
-        const l = Math.hypot(dx, dy) || 1;
-        p.dodgeX = dx / l; p.dodgeY = dy / l;
-        p.dodgeTimer = 0.24; p.dodgeCd = 1.9; p.invuln = Math.max(p.invuln, 0.42);
-        G.audio.play('dodge');
-        G.FX.smoke(game, p.x, p.y, 5, '#2c2620');
+      // 翻滚 / 替换基础闪避：两者都消耗闪避充能
+      if (SET.pressed('dodge') && S.dodgeCharges(p) >= 1) {
+        const swapId = S.dodgeSwapSkill(p);
+        if (swapId) {
+          // 选了「替换基础闪避」：闪避键改为释放该位移技能，冷却当作充能回复时间；
+          // 放不出来（法力不足 / 眩晕中）就不扣充能
+          if (G.Skills.cast(game, p, swapId, dodgeAim(game, p, aim), { ignoreCd: true })) {
+            p.dodgeCharge = S.dodgeCharges(p) - 1;
+          }
+        } else {
+          let dx = moveX, dy = moveY;
+          if (!dx && !dy) { dx = Math.cos(p.facing); dy = Math.sin(p.facing); }
+          const l = Math.hypot(dx, dy) || 1;
+          p.dodgeX = dx / l; p.dodgeY = dy / l;
+          p.dodgeTimer = 0.24; p.invuln = Math.max(p.invuln, 0.42);
+          p.dodgeCharge = S.dodgeCharges(p) - 1;
+          G.audio.play('dodge');
+          G.FX.smoke(game, p.x, p.y, 5, '#2c2620');
+        }
       }
       // 药水
       if (SET.pressed('potionLife')) game.usePotion('life');
@@ -419,6 +439,20 @@
     return 420;
   }
   ENT.basicRange = basicRange;
+
+  /* 闪避键改放位移技能时的瞄准点：
+   *   1. 有攻击目标 → 直接冲脸
+   *   2. 否则用准心位置；离自己太近（鼠标压在身上）就朝正前方推出去，免得原地小跳
+   */
+  const DODGE_AIM_MIN = 130;
+  function dodgeAim(game, p, aim) {
+    const t = p.attackTarget;
+    if (t && !t.dead) return { x: t.x, y: t.y };
+    const a = aim || game.aimWorld();
+    if (G.dist(p.x, p.y, a.x, a.y) >= DODGE_AIM_MIN) return a;
+    return { x: p.x + Math.cos(p.facing) * DODGE_AIM_MIN, y: p.y + Math.sin(p.facing) * DODGE_AIM_MIN };
+  }
+  ENT.dodgeAim = dodgeAim;
 
   // 远程职业希望维持的最小距离：敌人贴脸时后撤，而不是继续前进
   function keepDistance(p) {

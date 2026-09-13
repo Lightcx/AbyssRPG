@@ -138,6 +138,7 @@
               <li><b data-key="potionLife">Q</b> / <b data-key="potionMana">E</b> 喝生命 / 法力药水　<b data-key="pickup">F</b> 拾取 / 与人交谈</li>
               <li><b data-key="inventory">I</b> 背包　<b data-key="character">C</b> 角色　<b data-key="vendor">V</b> 商人　<b data-key="help">H</b> 帮助　<b data-key="map">M</b> 大地图　<b data-key="settings">O</b> 设置</li>
               <li><b data-key="craft">G</b> 做装工坊　<b data-key="stash">K</b> 仓库　<b data-key="town">B</b> 城镇建设　<b data-key="recall">T</b> 往返城镇/深渊</li>
+              <li>长按 <b data-key="revealFilter">X</b> 显示地上的全部装备（松开恢复）</li>
               <li><b>Esc</b> 暂停　按住 <b>Alt</b> 显示地面物品名</li>
               <li><b>Shift + 点击</b> 物品：快速装备 / 快速出售</li>
             </ul>
@@ -192,18 +193,29 @@
         <div id="filter-rules" class="flt-rules"></div>
         <div class="flt-foot">
           <button class="btn" id="btn-filter-add">+ 新增规则</button>
-          <button class="btn" id="btn-filter-reveal">临时显示被隐藏的物品</button>
           <button class="btn danger" id="btn-filter-clear">清空全部规则</button>
         </div>
-        <h3>导入 / 导出 <span class="dim small">把下面的文本复制走即可备份，粘贴别人的文本再点导入</span></h3>
-        <textarea id="filter-json" class="flt-json" spellcheck="false"></textarea>
+        <h3>导入 / 导出 <span class="dim small">点按钮才会弹出文本框：导出拿去备份，导入粘贴别人的文本</span></h3>
         <div class="flt-foot">
-          <button class="btn" id="btn-filter-export">导出到文本框</button>
-          <button class="btn" id="btn-filter-import">从文本框导入</button>
-          <button class="btn" id="btn-filter-copy">复制</button>
+          <button class="btn" id="btn-filter-export">导出过滤器</button>
+          <button class="btn" id="btn-filter-import">导入过滤器</button>
           <span class="dim small" id="filter-msg"></span>
         </div>
         <p class="hint dim" id="filter-hint"></p>
+      </div>
+      <!-- 点「导出 / 导入」才盖在整块面板上的小窗（放在 .pbody 外面，
+           这样滚轮不会把那层灰底连同输入框一起滚走） -->
+      <div class="flt-io" id="filter-io" hidden>
+        <div class="flt-io-box">
+          <h3 id="filter-io-title">导出过滤器</h3>
+          <p class="hint dim" id="filter-io-hint"></p>
+          <textarea id="filter-json" class="flt-json" spellcheck="false"></textarea>
+          <div class="flt-foot">
+            <button class="btn" id="btn-filter-io-ok">复制</button>
+            <button class="btn" id="btn-filter-io-close">关闭</button>
+            <span class="dim small" id="filter-io-msg"></span>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -363,6 +375,13 @@
         <p class="hint">点击按键按钮后按下新按键即可改键；<b>Delete</b> 清除绑定，<b>Esc</b> 放弃修改。同一按键在同模式下只会保留一个动作。</p>
         <div id="bind-list" class="bind-list"></div>
         <p class="hint" id="bind-warn" style="color:#ff8f8f"></p>
+        <h3>界面显示</h3>
+        <p class="hint">控制人物头顶与脚下的状态条；关闭后画面更干净。</p>
+        <div class="settings-foot">
+          <button class="btn" id="btn-hpbar">在人物头顶显示血条</button>
+          <button class="btn" id="btn-manabar">在人物头顶显示蓝条</button>
+          <button class="btn" id="btn-dodgebar">在人物脚下显示闪避条</button>
+        </div>
         <div class="settings-foot">
           <button class="btn" id="btn-bind-reset">恢复默认按键</button>
           <button class="btn" id="btn-sound">音效：开</button>

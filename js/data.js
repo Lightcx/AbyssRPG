@@ -24,6 +24,9 @@
     deathGoldLoss: 0.1,
     dropBase: 0.30,            // 普通怪掉落装备的基础概率
     goldBase: 14,
+    /* 技能伤害的攻速基准：技能伤害 = 武器均伤 × (武器攻速 / 这个值)。
+     * 取全部武器攻速的平均值（约 1.16），所以整体强度不变，只是把「慢速高单伤」白赚的那份去掉。 */
+    skillRefAps: 1.16,
   };
 
   // 怪物等级：**层数**是主项，难度只在此之上加少量等级
@@ -438,12 +441,23 @@
     { id: 'frost', name: '冰霜元素', kind: 'caster', shape: 'elemental', color: '#7fd8ff', size: 16, life: 49, dmg: 84, armor: 14, speed: 70, range: 290, cd: 1.8, xp: 30, minFloor: 9, weight: 7, proj: { speed: 240, color: '#7fd8ff', size: 9, elem: 'cold', slow: 0.45 } },
     { id: 'lich', name: '巫妖', kind: 'caster', shape: 'wraith', color: '#b06fd8', size: 17, life: 78, dmg: 101, armor: 20, speed: 68, range: 320, cd: 2.2, xp: 46, minFloor: 11, weight: 6, summon: 'skeleton', summonCd: 6.5, proj: { speed: 300, color: '#b06fd8', size: 8, homing: 1.1 } },
     { id: 'slasher', name: '裂魂者', kind: 'melee', shape: 'demon', color: '#d1476a', size: 18, life: 62, dmg: 119, armor: 22, speed: 104, range: 34, cd: 1.1, xp: 38, minFloor: 10, weight: 8 },
+    /* 训练场的假人：不会动、不会打人、打不死，只用来测伤害（weight 0 = 不会随机刷出来） */
+    { id: 'dummy', name: '训练假人', kind: 'dummy', shape: 'dummy', color: '#b79b6a', size: 16, life: 40, dmg: 0, armor: 0, speed: 0, range: 0, cd: 99, xp: 0, minFloor: 1, weight: 0, dummy: true },
+    { id: 'dummy_boss', name: '训练用恶魔像', kind: 'dummy', shape: 'dummy_boss', color: '#d1476a', size: 26, life: 40, dmg: 0, armor: 0, speed: 0, range: 0, cd: 99, xp: 0, minFloor: 1, weight: 0, dummy: true, isBossDummy: true },
   ];
   D.MONSTERS = MONSTERS;
   D.monsterById = {}; MONSTERS.forEach((m) => { D.monsterById[m.id] = m; });
   D.monstersForFloor = function (floor) {
-    return MONSTERS.filter((m) => m.minFloor <= floor + 1);
+    return MONSTERS.filter((m) => !m.dummy && m.minFloor <= floor + 1);
   };
+
+  /* 训练场（戈登）的三种模式 */
+  D.TRAINING_MODES = [
+    { id: 'single', name: '单个假人', desc: '一个木桩，专心测单体输出' },
+    { id: 'multi', name: '多个假人', desc: '三个假人排开，测范围伤害' },
+    { id: 'boss', name: 'BOSS 假人', desc: '恶魔像，对首领加成的分支会在这里生效' },
+  ];
+  D.trainingModeById = (id) => D.TRAINING_MODES.filter((m) => m.id === id)[0] || D.TRAINING_MODES[0];
 
   /* ---------------- 精英词缀 ---------------- */
   D.ELITE_AFFIXES = [
@@ -930,6 +944,8 @@
    * cost(lv) 返回升到 lv 级所需花费
    */
   D.BUILDING_VAULT_CAP = (l) => 40 + 20 * Math.max(1, l | 0);
+  // 仓库每升 1 级顺带扩 5 格背包（1 级 = 基础 60 格，满级 5 级 = 80 格）
+  D.BUILDING_BAG_CAP = (l) => 60 + 5 * (Math.max(1, l | 0) - 1);
   D.BUILDINGS = [
     {
       id: 'forge', name: '铁匠铺', glyph: '⚒', max: 5, color: '#c9752f',
@@ -963,8 +979,9 @@
     {
       id: 'vault', name: '仓库', glyph: '▤', max: 5, color: '#cbb894',
       desc: '扩建仓库，把刷到的好东西统统留下来。',
-      perk: (l) => '仓库容量 ' + D.BUILDING_VAULT_CAP(l) + ' 格',
+      perk: (l) => '仓库容量 ' + D.BUILDING_VAULT_CAP(l) + ' 格　背包 ' + D.BUILDING_BAG_CAP(l) + ' 格',
       stashCap: (l) => D.BUILDING_VAULT_CAP(l),
+      bagCap: (l) => D.BUILDING_BAG_CAP(l),
       cost: (l) => ({ gold: Math.round(600 * Math.pow(1.95, l - 2)), shards: Math.round(5 * Math.pow(1.8, l - 2)) }),
     },
     {

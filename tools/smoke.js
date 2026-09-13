@@ -386,15 +386,15 @@ p.inventory.forEach((it, i) => { if (it && it.cat === 'equip') G.UI.sellInv(i); 
 ok(p.gold > goldBefore, '出售装备获得金币');
 report('商店买入/卖出正常');
 
-// 排序 & 一键出售
+// 排序 & 一键卖出（背包里的按钮已移除，改由商人面板调用同一套逻辑）
 const junkBefore = p.inventory.filter(Boolean).length;
 for (let i = 0; i < 10; i++) p.inventory[i] = G.Loot.makeItem(rng, { ilvl: 20, rarity: 'common' });
-G.UI.sellJunk();
+G.UI.sellAllEquipRun();
 G.UI.sortInventory();
 ok(p.inventory.length === 60 && p.inventory.filter(Boolean).length < junkBefore + 10,
-  '一键出售清掉了普通装备（' + junkBefore + ' + 10 → ' + p.inventory.filter(Boolean).length + '）');
+  '一键卖出清掉了装备（' + junkBefore + ' + 10 → ' + p.inventory.filter(Boolean).length + '）');
 ok(p.inventory.every((it) => !it || it.rarity), '整理后背包里都是完整的物品');
-report('背包整理与一键出售正常');
+report('背包整理与一键卖出正常');
 
 /* ============================================================ */
 section('6. BOSS 层与难度推进');
@@ -3871,9 +3871,15 @@ section('19. Todo 改造：难度分离 / 掉落曲线 / 层缓存 / 布局 / �
     // 词缀 / 需求 / 部位 / 可穿戴 等细则
     F.clear();
     rare.affixes = [{ id: 'p_crit', stat: 'crit', value: 5, tier: 1, kind: 'prefix', name: '精准的' }];
-    F.addRule({ action: 'show', enabled: true, conds: [{ type: 'affix', op: 'has', value: '暴击' }] });
-    ok(F.decide(rare, {}).state === 'show', '按词缀文本匹配（暴击）');
+    // 「包含词缀」改成勾选 + 「至少包含 N 条」
+    F.addRule({ action: 'show', enabled: true, conds: [{ type: 'affix', op: 'has', value: 1, affixIds: ['p_crit'] }] });
+    ok(F.decide(rare, {}).state === 'show', '按勾选的词缀匹配');
     ok(F.decide(rareHi, {}).state === 'normal', '没有该词缀就不命中');
+    F.data.rules[0].conds[0].value = 2;
+    F.data.rules[0].conds[0].affixIds = ['p_crit', 'p_str'];
+    ok(F.decide(rare, {}).state === 'normal', '勾两条但「至少 2 条」时只命中一条 → 不通过');
+    F.data.rules[0].conds[0].affixIds = [];
+    ok(F.decide(rare, {}).state === 'show', '一条词缀都没勾 → 该细则不参与筛选');
     F.clear();
     F.addRule({ action: 'hide', enabled: true, conds: [{ type: 'slot', op: 'is', value: 'chest' }] });
     ok(F.decide(common, {}).state === 'hide', '按部位匹配');
@@ -4410,7 +4416,13 @@ const mustHave = ['game', 'hud', 'skillbar', 'minimap', 'orb-life', 'orb-mana', 
   'hud-floor', 'hud-difficulty', 'hud-mlvl', 'gold-val', 'hud-killed', 'hud-total', 'objective',
   'levelup-toast', 'buffbar', 'utilitybar',
   'slot-list', 'btn-back-slots', 'panel-craft', 'craft-inv', 'craft-gear', 'craft-bench', 'craft-log',
-  'panel-stash', 'stash-inv', 'stash-grid', 'stash-cap', 'panel-blacksmith', 'bs-list', 'bs-shards',
+  'panel-stash', 'stash-inv', 'stash-grid', 'stash-cap', 'panel-blacksmith', 'bs-grid', 'bs-shards',
+  'bs-sum', 'btn-salvage-all', 'btn-sell-all', 'inv-cap',
+  'panel-confirm', 'confirm-title', 'confirm-text', 'btn-confirm-ok', 'btn-confirm-cancel',
+  'affix-pick', 'affix-list', 'affix-pick-count', 'affix-pick-hint', 'affix-hide-conflict',
+  'btn-affix-ok', 'btn-affix-close', 'btn-affix-none', 'affix-msg',
+  'panel-training', 'training-modes', 'btn-training-town',
+  'dps-box', 'dps-now', 'dps-peak', 'dps-total', 'dps-detail', 'dps-mode',
   'panel-town', 'town-buildings', 'town-gold', 'town-shards', 'panel-jeweler', 'jeweler-list',
   'panel-rift', 'rift-floor', 'rift-enter', 'rift-diff', 'btn-slots',
   'panel-settings', 'mode-pick', 'mode-desc', 'bind-list', 'bind-mode-label',
@@ -4616,6 +4628,164 @@ section('21. 闪避充能 / 替换基础闪避 / 头顶状态条');
   ok(G.Settings.show('hpBar') === true && G.Settings.setShow('不存在的项', true) === false,
     '开关可以改回来，非法键被拒绝');
   report('闪避充能：1 格基础 + 词缀最多 3 格，回充受「闪避恢复时间」与技能冷却影响，闪避键可改放位移技能');
+
+/* ============================================================ */
+section('22. 一键卖/分解 · 背包扩容 · 过滤器改版 · 训练场 · 武器攻速归一');
+{
+  const tb = new G.Game(515150);
+  G.GAME = tb; G.UI.game = tb;
+  tb.startClass('barb', 0);
+  const p = tb.player;
+  const mkE = (r, ilvl) => G.Loot.makeItem(tb.rng, { ilvl: ilvl || 30, slot: 'helm', rarity: r || 'rare' });
+  const gemItem = (r) => { const it = mkE(r); it.sockets = 1; it.gems = [{ gem: 'ruby', tier: 0 }]; return it; };
+
+  /* ---- 背包扩容：仓库每级 +5 格 ---- */
+  ok(G.DATA.BUILDING_BAG_CAP(1) === 60 && G.DATA.BUILDING_BAG_CAP(3) === 70 && G.DATA.BUILDING_BAG_CAP(5) === 80,
+    '背包容量 60 / 70 / 80', [1, 3, 5].map(G.DATA.BUILDING_BAG_CAP).join(','));
+  ok(G.Town.bagCap(p) === 60, '1 级仓库 = 60 格');
+  p.town.buildings.vault = 3;
+  ok(G.Town.growBag(p) === 10 && p.inventory.length === 70, '仓库升级把背包补到 70 格', p.inventory.length);
+  G.UI.refreshInventory();
+  ok(G.el('inv-grid').children.length === 70 && G.el('inv-cap').textContent === '背包 70 格',
+    '背包格子与容量提示同步', G.el('inv-grid').children.length);
+  p.town.buildings.vault = 1;
+  p.inventory = new Array(60).fill(null);
+
+  /* ---- 一键分解 / 一键卖出：跳过镶宝石的、宝石与通货不动 ---- */
+  for (let i = 0; i < 5; i++) p.inventory[i] = mkE('common', 20 + i);
+  p.inventory[5] = mkE('unique', 40);
+  const keep = gemItem('rare');
+  p.inventory[6] = keep;
+  p.inventory[7] = { cat: 'gem', name: '碎裂的红宝石', gem: 'ruby', tier: 0, count: 2 };
+  p.inventory[8] = { cat: 'orb', orb: 'chaos', name: '混沌石', count: 1 };
+  p.shards = 0; p.gold = 500;
+  G.UI.salvageAll();
+  ok(G.el('panel-confirm').hidden === false && G.el('confirm-text').textContent.indexOf('6 件') >= 0,
+    '一键分解先弹确认框并报件数', G.el('confirm-text').textContent.slice(0, 40));
+  G.UI.salvageAllRun();
+  ok(p.shards > 0 && p.inventory.filter(Boolean).length === 3, '一键分解拿走全部装备（含暗金）', p.inventory.filter(Boolean).length);
+  ok(p.inventory[6] === keep && p.inventory[7] && p.inventory[8], '镶宝石装备 / 宝石 / 通货石都留着');
+  p.inventory[9] = mkE('rare', 35);
+  const gold0 = p.gold;
+  G.UI.sellAllEquip();
+  ok(G.el('panel-confirm').hidden === false, '一键卖出先弹确认框');
+  G.UI.confirmResolve(true);
+  ok(p.gold > gold0 && p.inventory[9] === null, '一键卖出把装备换成金币', p.gold - gold0);
+  ok(p.inventory[7] && p.inventory[8] && p.inventory[6] === keep, '一键卖出不碰宝石 / 通货 / 镶宝石装备');
+
+  /* ---- 单件操作先询问 ---- */
+  p.inventory[10] = gemItem('magic');
+  const shards1 = p.shards, gold1 = p.gold;
+  G.UI.salvageAt(10);
+  ok(p.inventory[10] && p.shards === shards1 && G.el('panel-confirm').hidden === false, '点分解镶宝石装备先问一次');
+  G.UI.togglePanel('panel-confirm', false);
+  ok(p.inventory[10] && G.UI._confirmCb === null, '取消后装备还在、回调不残留');
+  G.UI.sellInv(10);
+  ok(p.inventory[10] && p.gold === gold1, '点卖镶宝石装备也先问一次');
+  G.UI.confirmResolve(true);
+  ok(p.inventory[10] === null && p.gold > gold1, '确认后才真的卖掉', p.gold - gold1);
+
+  /* ---- 分解界面 = 背包网格 ---- */
+  G.UI.renderBlacksmith();
+  ok(G.el('bs-grid').children.length === p.inventory.length, '分解界面铺的是整个背包', G.el('bs-grid').children.length);
+  ok(G.el('bs-sum').textContent.indexOf('可分解') >= 0, '有可分解件数与残晶合计', G.el('bs-sum').textContent.slice(0, 24));
+
+  /* ---- 装备栏不会被长名字撑大 ---- */
+  const dollRules = css.split('.gear-doll{').slice(1).map((r) => r.slice(0, 220));
+  ok(dollRules.some((r) => r.indexOf('min-width:0') >= 0 && r.indexOf('overflow:hidden') >= 0),
+    '装备栏限制最小宽度 / 溢出（不会被长文本撑开）', dollRules.length + ' 条规则');
+  const slotRules = css.split('.gear-doll>.slot-equip{').slice(1).map((r) => r.slice(0, 140));
+  ok(slotRules.length > 0 && slotRules.every((r) => r.indexOf('min-width:0') >= 0),
+    '装备格子自身也允许收缩', slotRules.join(' | '));
+
+  /* ---- 过滤器：新规则置顶 / 拖拽 / 勾选词缀 ---- */
+  const F = G.Filter;
+  F.data.rules = [];
+  F.insertRule({ action: 'hide', enabled: true, conds: [{ type: 'rarity', op: 'is', value: 'common' }] });
+  F.insertRule({ action: 'show', enabled: true, conds: [{ type: 'ilvl', op: '>=', value: 50 }] });
+  ok(F.data.rules[0].action === 'show', '新规则放在第 1 条');
+  ok(F.moveRuleTo(0, 1) && F.data.rules[0].action === 'hide' && F.moveRuleTo(1, 0) && F.data.rules[0].action === 'show',
+    '拖拽排序生效（moveRuleTo）');
+  ok(F.moveRuleTo(9, 0) === false, '越界拖动不处理');
+  const c1 = { type: 'affix', op: 'has', value: 2, affixIds: ['p_str', 'p_dex', 's_life'] };
+  const withAffixes = (ids) => ({ cat: 'equip', slot: 'helm', affixes: ids.map((id) => ({ id: id, stat: 'str', value: 1, kind: 'prefix', name: 'x' })) });
+  ok(F.matchCond(withAffixes(['p_str', 'p_dex']), c1, {}) === true, '命中 2 条 → 通过');
+  ok(F.matchCond(withAffixes(['p_str']), c1, {}) === false, '只命中 1 条 → 不通过');
+  ok(F.matchCond(withAffixes([]), { type: 'affix', op: 'has', value: 1, affixIds: [] }, {}) === true, '未勾选时不参与筛选');
+  ok(F.migrateConds([{ type: 'affix', op: 'has', value: '暴击' }]).length === 0, '老的文字词缀条件被清空');
+  const poolHelm = F.affixPool([{ type: 'slot', op: 'is', value: 'helm' }], true).map((a) => a.id);
+  const poolBoots = F.affixPool([{ type: 'slot', op: 'is', value: 'boots' }], true).map((a) => a.id);
+  ok(poolHelm.indexOf('s_dodgeCharges') < 0 && poolBoots.indexOf('s_dodgeCharges') >= 0,
+    '冲突隐藏：头盔里看不到靴子专属词缀，靴子里能看到');
+  ok(F.affixPool([{ type: 'slot', op: 'is', value: 'helm' }], false).length === G.DATA.AFFIXES.length,
+    '关掉开关后列出全部词缀');
+  F.data.rules = [{ action: 'hide', enabled: true, conds: [c1] }];
+  G.UI.renderFilter();
+  const card = G.el('filter-rules').children[0];
+  ok(!!card && card.draggable === true, '规则卡片可拖拽');
+  ok(String(card.innerHTML).indexOf('data-act="pickAffix"') >= 0 && String(card.innerHTML).indexOf('至少包含') >= 0,
+    '细则里有「选择词缀」按钮与「至少包含 N 条」输入框');
+  G.UI.openAffixPick(0, 0);
+  ok(G.el('affix-pick').hidden === false && G.UI.affixSel.length === 3, '勾选面板打开并带入已选词缀');
+  G.UI.toggleAffix('p_str', false);
+  G.UI.confirmAffixPick();
+  ok(F.data.rules[0].conds[0].affixIds.length === 2 && G.el('affix-pick').hidden === true, '确定后写回规则并关闭');
+  F.data.rules = [];
+
+  /* ---- 训练场 ---- */
+  const gm = G.Dungeon.makeTraining(tb.rng, { mode: 'multi' });
+  ok(gm.w === 30 && gm.h === 20 && gm.dummySpots.length === 3 && !!gm.townPortal, '训练场地图生成正常');
+  ok(G.Dungeon.solidAtWorld(gm, gm.playerStart.x, gm.playerStart.y) === false &&
+    G.Dungeon.solidAtWorld(gm, 22, 22) === true, '出生点空地、四周是墙');
+  tb.enterFloor(3);
+  const floorMonsters = tb.monsters.length;
+  ok(tb.enterTraining('multi') === true && tb.area === 'training' && tb.monsters.length === 3, '进入训练场并刷出 3 个假人');
+  ok(tb.floorCache && tb.floorCache.floor === 3 && tb.floorCache.monsters.length === floorMonsters,
+    '进练功房前先把深渊这一层存好', tb.floorCache && tb.floorCache.monsters.length);
+  const dummy = tb.monsters[0];
+  ok(dummy.dummy === true && dummy.maxLife > 1e11 && dummy.dmg === 0 && dummy.aggro === false, '假人血厚 / 无伤 / 不仇恨');
+  const dpos = { x: dummy.x, y: dummy.y };
+  for (let i = 0; i < 120; i++) tb.update(1 / 60);
+  ok(Math.abs(dummy.x - dpos.x) < 0.01 && Math.abs(dummy.y - dpos.y) < 0.01, '假人原地不动');
+  const comps = G.Stats.attackComponents(p, G.Stats.skillShape(p, G.DATA.SKILLS.barb_rend), 5);
+  let dealt = 0;
+  for (let i = 0; i < 10; i++) dealt += G.Combat.hitMonster(tb, dummy, comps, {});
+  for (let i = 0; i < 3; i++) tb.update(1 / 60);
+  ok(dealt > 0 && dummy.dead === false && dummy.life === dummy.maxLife, '假人打不死', Math.round(dealt));
+  ok(tb.killed === 0 && tb.portalOpen === false, '训练场不计击杀、不开传送门');
+  ok(tb.train && tb.train.total > 0 && tb.trainDps(5) > 0, 'DPS 统计在跑', tb.train && Math.round(tb.train.total));
+  G.UI.updateHUD();
+  ok(G.el('dps-box').hidden === false && G.el('hud-floor').textContent.indexOf('训练场') >= 0, '训练场显示 DPS 面板与顶栏');
+  ok(G.UI.TOWN_ONLY.indexOf('panel-training') >= 0, '训练场面板限城镇打开');
+  ok(tb.toTown('recall') === true && tb.area === 'town', '按 T 回城（假人不拦路）');
+  G.UI.updateHUD();
+  ok(G.el('dps-box').hidden === true, '离开训练场后 DPS 面板收起');
+  ok(tb.floorCache && tb.floorCache.floor === 3, '层缓存仍然是深渊那一层');
+
+  /* ---- 技能伤害按武器秒伤归一 ---- */
+  const wpn = (min, max, aps) => ({
+    cat: 'equip', slot: 'weapon', name: '测试武器', rarity: 'rare', ilvl: 60, base: 'x',
+    min: min, max: max, aps: aps, kind: 'melee', two: false, affixes: [], implicit: [], gems: [], sockets: 0,
+  });
+  const total = (c) => c.physical + c.fire + c.cold + c.lightning + c.poison;
+  const sk = G.Stats.skillShape(p, G.DATA.SKILLS.barb_rend);
+  p.gear.weapon = wpn(15, 17, 1.0); G.Stats.derive(p);
+  const slowDps = p.stats.weaponDps;
+  const slowSkill = total(G.Stats.attackComponents(p, sk, 5));
+  const slowBasic = total(G.Stats.attackComponents(p, G.DATA.SKILLS.barb_basic, 5));
+  p.gear.weapon = wpn(9, 11, 1.6); G.Stats.derive(p);
+  const fastDps = p.stats.weaponDps;
+  const fastSkill = total(G.Stats.attackComponents(p, sk, 5));
+  const fastBasic = total(G.Stats.attackComponents(p, G.DATA.SKILLS.barb_basic, 5));
+  ok(Math.abs(slowDps - fastDps) < 0.01, '两把武器秒伤相同', slowDps.toFixed(2) + ' / ' + fastDps.toFixed(2));
+  ok(Math.abs(slowSkill - fastSkill) < 0.001, '同秒伤 → 技能伤害一致（慢武器不再白赚）',
+    slowSkill.toFixed(2) + ' / ' + fastSkill.toFixed(2));
+  ok(slowBasic > fastBasic * 1.4, '普通攻击仍是慢武器单发更高', slowBasic.toFixed(1) + ' / ' + fastBasic.toFixed(1));
+  ok(G.BALANCE.skillRefAps === 1.16, '基准攻速写在 G.BALANCE 里（可调）');
+  p.gear.weapon = null; G.Stats.derive(p);
+  report('一键卖/分解、背包扩容、过滤器改版、训练场、攻速归一均已覆盖');
+}
+
 }
 
 

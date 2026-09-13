@@ -110,6 +110,8 @@
     m.aggro = true;
     m.dmgTaken = (m.dmgTaken || 0) + total;
     m.lastHitBy = fromPlayer ? 'player' : 'other';
+    // 训练场：把玩家打出的伤害记进 DPS 统计
+    if (fromPlayer && game.area === 'training' && game.trainHit) game.trainHit(total, crit);
 
     G.FX.hit(game, m.x, m.y - m.r * 0.4, opts.elem || 'physical', total);
     G.FX.text(game, m.x + G.rand(-8, 8), m.y - m.r - 12, total, crit ? '#ffe45c' : (G.ELEM_COLOR[opts.elem] || '#f0e6d2'), crit ? 21 : 14, crit);

@@ -28,7 +28,7 @@
   UI.ready = function () { return !!(UI.game && UI.game.player); };
 
   // 需要身处城镇才能使用的服务
-  UI.TOWN_ONLY = ['panel-craft', 'panel-stash', 'panel-blacksmith', 'panel-town', 'panel-jeweler', 'panel-rift', 'panel-respec'];
+  UI.TOWN_ONLY = ['panel-craft', 'panel-stash', 'panel-blacksmith', 'panel-town', 'panel-jeweler', 'panel-rift', 'panel-respec', 'panel-training'];
   // 选了职业 / 读档之后调用：重建所有依赖玩家的界面
   UI.onNewPlayer = function () {
     UI.craftUid = null;
@@ -87,6 +87,7 @@
     UI.bindSkillWindow();
     UI.bindFilter();
     UI.bindSettings();
+    UI.buildTraining();
     if (root.document) {
       root.document.addEventListener('mousedown', (e) => {
         const menu = el('ctxmenu');
@@ -564,11 +565,11 @@
   /* ============================================================
    *  背包
    * ============================================================ */
-  UI.buildInventory = function () {
-    const grid = el('inv-grid');
+  /* 背包格数会随仓库等级变化：按需增删格子（已有格子保留绑定，只动尾部） */
+  UI.syncInvCells = function (grid, cap) {
     if (!grid) return;
-    grid.innerHTML = '';
-    for (let i = 0; i < 60; i++) {
+    while (grid.children.length > cap) grid.removeChild(grid.children[grid.children.length - 1]);
+    for (let i = grid.children.length; i < cap; i++) {
       const c = root.document.createElement('div');
       c.className = 'cell empty';
       c.dataset.idx = i;
@@ -579,12 +580,16 @@
       });
       grid.appendChild(c);
     }
+  };
+
+  UI.buildInventory = function () {
+    const grid = el('inv-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    const inv = (UI.game && UI.game.player && UI.game.player.inventory) || null;
+    UI.syncInvCells(grid, (inv && inv.length) || 60);
     const btnSort = el('btn-sort');
     if (btnSort) btnSort.addEventListener('click', () => UI.sortInventory());
-    const btnJunk = el('btn-sell-junk');
-    if (btnJunk) btnJunk.addEventListener('click', () => UI.sellJunk());
-    const btnJunk2 = el('btn-sell-magic');
-    if (btnJunk2) btnJunk2.addEventListener('click', () => UI.sellMagicJunk());
   };
 
   UI.bindCellEvents = function (cell, getItem, handlers) {
@@ -732,13 +737,15 @@
     });
     const add = el('btn-filter-add');
     if (add) add.addEventListener('click', () => {
-      if (!G.Filter.addRule()) {
+      // 新规则插到最前面：刚写的规则立刻生效
+      if (!G.Filter.insertRule()) {
         UI.filterMsg('最多只能有 ' + G.Filter.MAX_RULES + ' 条规则。', true);
         return;
       }
       G.Filter.save();
       UI.refreshFilterViews();
       UI.renderFilter();
+      UI.filterMsg('新规则已放在第 1 条（越靠前越优先）。');
     });
     const clr = el('btn-filter-clear');
     if (clr) clr.addEventListener('click', () => {
@@ -759,6 +766,28 @@
     // 点小窗外的灰底也能关掉
     const iowrap = el('filter-io');
     if (iowrap) iowrap.addEventListener('click', (ev) => { if (ev.target === iowrap) UI.closeFilterIO(); });
+    /* ---- 词缀勾选面板 ---- */
+    const hideC = el('affix-hide-conflict');
+    if (hideC) hideC.addEventListener('change', () => {
+      G.Filter.data.hideConflict = !!hideC.checked;
+      G.Filter.save();
+      UI.renderAffixPick();
+    });
+    const afxOk = el('btn-affix-ok');
+    if (afxOk) afxOk.addEventListener('click', () => UI.confirmAffixPick());
+    const afxNo = el('btn-affix-close');
+    if (afxNo) afxNo.addEventListener('click', () => UI.closeAffixPick());
+    const afxNone = el('btn-affix-none');
+    if (afxNone) afxNone.addEventListener('click', () => { UI.affixSel = []; UI.renderAffixPick(); });
+    const afxWrap = el('affix-pick');
+    if (afxWrap) afxWrap.addEventListener('click', (ev) => { if (ev.target === afxWrap) UI.closeAffixPick(); });
+    const afxList = el('affix-list');
+    if (afxList) {
+      afxList.addEventListener('change', (ev) => {
+        const t2 = ev && ev.target;
+        if (t2 && t2.dataset && t2.dataset.afx) UI.toggleAffix(t2.dataset.afx, !!t2.checked);
+      });
+    }
     // 细则里的输入控件：事件委托，避免每次重建都重新绑定
     const rules = el('filter-rules');
     if (rules) {
@@ -809,6 +838,101 @@
     return true;
   };
 
+  /* ---------------- 词缀勾选面板（盖在过滤器面板上） ---------------- */
+  UI.affixSel = [];
+  UI.affixTarget = null;
+
+  UI.openAffixPick = function (ri, ci) {
+    const rule = G.Filter.data.rules[ri];
+    const cond = rule && rule.conds[ci];
+    if (!cond) return;
+    UI.affixTarget = { ri: ri, ci: ci };
+    UI.affixSel = G.Filter.affixIds(cond).slice();
+    const box = el('affix-pick');
+    if (!box) return;
+    UI.renderAffixPick();
+    box.hidden = false;
+  };
+
+  UI.closeAffixPick = function () {
+    UI.affixTarget = null;
+    const box = el('affix-pick');
+    if (box) box.hidden = true;
+  };
+
+  UI.toggleAffix = function (id, on) {
+    const i = UI.affixSel.indexOf(id);
+    if (on && i < 0) UI.affixSel.push(id);
+    if (!on && i >= 0) UI.affixSel.splice(i, 1);
+    UI.renderAffixPick();
+  };
+
+  UI.renderAffixPick = function () {
+    const F = G.Filter;
+    const hideC = el('affix-hide-conflict');
+    if (hideC) hideC.checked = F.data.hideConflict !== false;
+    const tgt = UI.affixTarget;
+    const rule = tgt ? F.data.rules[tgt.ri] : null;
+    const conds = rule ? rule.conds : [];
+    const pool = F.affixPool(conds, F.data.hideConflict !== false);
+    const count = el('affix-pick-count');
+    if (count) count.textContent = '已选 ' + UI.affixSel.length + ' 条 / 可选 ' + pool.length + ' 条';
+    const hint = el('affix-pick-hint');
+    if (hint) {
+      const slots = F.allowedSlots(conds);
+      hint.textContent = (F.data.hideConflict !== false && slots && slots.length)
+        ? '这条规则限定了部位 / 类型，只列出会出现在这些部位的词缀；关掉上面的开关可以看全部词缀。'
+        : '勾选想要的词缀（可多选），再配合前面的「至少包含 N 条」使用。';
+    }
+    const list = el('affix-list');
+    if (!list) return;
+    list.innerHTML = '';
+    const groups = [['prefix', '前缀'], ['suffix', '后缀']];
+    let total = 0;
+    groups.forEach((grp) => {
+      const items = pool.filter((a) => a.kind === grp[0]);
+      if (!items.length) return;
+      total += items.length;
+      const h = root.document.createElement('div');
+      h.className = 'afx-group';
+      h.textContent = grp[1] + '（' + items.length + '）';
+      list.appendChild(h);
+      const wrap = root.document.createElement('div');
+      wrap.className = 'afx-items';
+      items.forEach((a) => {
+        const on = UI.affixSel.indexOf(a.id) >= 0;
+        const lb = root.document.createElement('label');
+        lb.className = 'afx-item' + (on ? ' on' : '');
+        lb.innerHTML = '<input type="checkbox" data-afx="' + a.id + '"' + (on ? ' checked' : '') + '>' +
+          '<span class="an">' + a.name + '</span>' +
+          '<span class="as">' + ((D.STATS[a.stat] && D.STATS[a.stat].name) || a.stat) + '</span>';
+        wrap.appendChild(lb);
+      });
+      list.appendChild(wrap);
+    });
+    if (!total) {
+      const d = root.document.createElement('div');
+      d.className = 'hint dim';
+      d.textContent = '没有符合当前条件的词缀。';
+      list.appendChild(d);
+    }
+  };
+
+  UI.confirmAffixPick = function () {
+    const tgt = UI.affixTarget;
+    const rule = tgt ? G.Filter.data.rules[tgt.ri] : null;
+    const cond = rule && rule.conds[tgt.ci];
+    if (cond) {
+      cond.affixIds = UI.affixSel.slice(0, 60);
+      if (G.Filter.affixMin(cond) < 1) cond.value = 1;
+    }
+    G.Filter.save();
+    UI.refreshFilterViews();
+    UI.closeAffixPick();
+    UI.renderFilter();
+    UI.filterMsg('已选择 ' + UI.affixSel.length + ' 条词缀。');
+  };
+
   UI.filterIOConfirm = function () {
     const ta = el('filter-json');
     const txt = ta ? ta.value : '';
@@ -849,13 +973,19 @@
         cond.op = nt.ops[0].id;
         // 数值细则默认 0（不再给 20 这种拍脑袋的默认值）
         cond.value = nt.value === 'number' ? G.Filter.NUM_DEFAULT : nt.value === 'rarity' ? 'rare' : nt.value === 'slot' ? 'weapon'
-          : nt.value === 'bool' ? 'true' : '';
+          : nt.value === 'bool' ? 'true' : nt.value === 'affixPick' ? 1 : '';
         if (nt.attrPick) cond.attr = 'any';
+        if (nt.value === 'affixPick') {
+          cond.affixIds = [];
+          UI.openAffixPick(ri, ci);
+        }
       } else if (t.dataset.field === 'op') cond.op = t.value;
       else if (t.dataset.field === 'attr') cond.attr = G.Filter.attrOf({ attr: t.value });
       else if (t.dataset.field === 'value') {
+        const tv = G.Filter.condType(cond.type).value;
         // 数值细则写入前 clamp 到该细则的取值范围（输入框本身也带 min / max）
-        if (G.Filter.condType(cond.type).value === 'number' && !live) cond.value = G.Filter.clampValue(cond.type, t.value);
+        if (tv === 'affixPick') cond.value = G.clamp(Math.round(Number(t.value) || 1), 1, 12);
+        else if (tv === 'number' && !live) cond.value = G.Filter.clampValue(cond.type, t.value);
         else cond.value = t.value;
         if (live) return;                       // 输入过程中不重绘，避免打断打字
       }
@@ -875,6 +1005,7 @@
     if (act === 'del') G.Filter.removeRule(ri);
     else if (act === 'up') G.Filter.moveRule(ri, -1);
     else if (act === 'down') G.Filter.moveRule(ri, 1);
+    else if (act === 'pickAffix') { UI.openAffixPick(ri, ci); return; }   // 面板自己处理，不用重绘规则列表
     else if (act === 'addCond') {
       const rule = G.Filter.data.rules[ri];
       if (rule) rule.conds.push({ type: 'ilvl', op: '>=', value: G.Filter.NUM_DEFAULT });
@@ -910,7 +1041,7 @@
         card.className = 'frule' + (rule.action === 'hide' ? ' hide' : rule.action === 'show' ? ' show' : '');
         card.dataset.rule = ri;
         let h = '<div class="fr-hd">' +
-          '<span class="fr-idx">' + (ri + 1) + '</span>' +
+          '<span class="fr-idx" title="按住可拖动排序">' + (ri + 1) + '</span>' +
           '<label class="flt-toggle"><input type="checkbox" data-rule="' + ri + '" data-field="enabled"' +
           (rule.enabled === false ? '' : ' checked') + '> 启用</label>' +
           '<span class="fr-act">动作</span>' +
@@ -938,12 +1069,40 @@
         });
         h += '<button class="btn tiny" data-rule="' + ri + '" data-act="addCond">+ 添加细则</button></div>';
         card.innerHTML = h;
+        /* 拖拽排序（↑↓ 保留，两种都能用） */
+        card.draggable = true;
+        card.addEventListener('dragstart', (ev) => {
+          UI._dragRule = ri;
+          if (ev && ev.dataTransfer) {
+            try { ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', String(ri)); } catch (e) { }
+          }
+          card.className += ' dragging';
+        });
+        card.addEventListener('dragend', () => { UI._dragRule = null; UI.renderFilter(); });
+        card.addEventListener('dragover', (ev) => {
+          if (UI._dragRule == null) return;
+          if (ev && ev.preventDefault) ev.preventDefault();
+          if (card.className.indexOf('drag-over') < 0) card.className += ' drag-over';
+        });
+        card.addEventListener('dragleave', () => { card.className = card.className.replace(/ drag-over/g, ''); });
+        card.addEventListener('drop', (ev) => {
+          if (ev && ev.preventDefault) ev.preventDefault();
+          const from = UI._dragRule;
+          UI._dragRule = null;
+          if (from != null && from !== ri && G.Filter.moveRuleTo(from, ri)) {
+            G.Filter.save();
+            UI.refreshFilterViews();
+            UI.filterMsg('规则顺序已更新：第 ' + (from + 1) + ' 条 → 第 ' + (ri + 1) + ' 条。');
+          }
+          UI.renderFilter();
+        });
         box.appendChild(card);
       });
     }
     const hint = el('filter-hint');
     if (hint) {
       hint.innerHTML = '说明：装备一旦命中某条规则就按该规则处理，<b>不再看后面的规则</b>，所以「想把某类留下」的规则要放在前面。' +
+        '规则可以直接<b>拖拽排序</b>（也可以用每条右侧的 ↑ ↓），新增的规则默认放在第 1 条。' +
         '被判定为「隐藏」的装备<b>不会被捡起来</b>（走近自动吸取、F 拾取都不行），地面掉落平时也不显示，' +
         '背包与仓库里照常显示，只在格子外圈加一道暗色边框表示它不符合过滤器。过滤器对所有存档通用。';
     }
@@ -974,6 +1133,14 @@
     if (t.value === 'bool') {
       return '<select ' + attr + '><option value="true"' + (v === true || v === 'true' ? ' selected' : '') + '>是</option>' +
         '<option value="false"' + (v === false || v === 'false' ? ' selected' : '') + '>否</option></select>';
+    }
+    if (t.value === 'affixPick') {
+      const ids = G.Filter.affixIds(cond);
+      return '<button class="btn tiny pick" data-rule="' + ri + '" data-cond="' + ci + '" data-act="pickAffix">' +
+        (ids.length ? '已选 ' + ids.length + ' 条词缀' : '选择词缀…') + '</button>' +
+        '<span class="pick-min">至少包含</span>' +
+        '<input type="number" class="flt-num" ' + attr + ' min="1" max="12" step="1" value="' + G.Filter.affixMin(cond) + '">' +
+        '<span class="pick-min">条</span>';
     }
     if (t.value === 'number') {
       // 带上取值范围：输入框会拦住越界值，写入前还会再 clamp 一次
@@ -1030,6 +1197,7 @@
     const grid = el('inv-grid');
     if (!grid || !UI.ready()) return;
     const inv = UI.game.player.inventory;
+    UI.syncInvCells(grid, inv.length);
     Array.prototype.forEach.call(grid.children, (c, i) => {
       const it = inv[i];
       c.className = UI.cellClass(it);
@@ -1037,6 +1205,8 @@
     });
     const gold = el('inv-gold');
     if (gold) gold.textContent = UI.game.player.gold;
+    const cap = el('inv-cap');
+    if (cap) cap.textContent = '背包 ' + inv.length + ' 格';
     UI.refreshEquipDoll();
     UI.dirty.vendor = true;
     UI.dirty.inv = false;
@@ -1269,6 +1439,13 @@
     const p = UI.game.player;
     const it = p.gear[slot];
     if (!it) return;
+    UI.gemGuard(it, '出售', () => UI.sellEquippedRun(slot));
+  };
+
+  UI.sellEquippedRun = function (slot) {
+    const p = UI.game.player;
+    const it = p.gear[slot];
+    if (!it) return;
     p.gear[slot] = null;
     p.gold += L.price(it);
     S.derive(p);
@@ -1282,46 +1459,18 @@
     const p = UI.game.player;
     const it = p.inventory[i];
     if (!it) return;
+    UI.gemGuard(it, '出售', () => UI.sellInvRun(i));
+  };
+
+  UI.sellInvRun = function (i) {
+    const p = UI.game.player;
+    const it = p.inventory[i];
+    if (!it) return;
     p.inventory[i] = null;
     const price = L.price(it);
     p.gold += price;
     G.audio.play('gold');
     G.log('出售 ' + (it.cat === 'equip' ? L.displayName(it) : it.name) + '，获得 ' + price + ' 金币', 'dim');
-    UI.dirty.inv = true; UI.dirty.vendor = true;
-    UI.refreshInventory();
-  };
-
-  UI.sellJunk = function () {
-    const p = UI.game.player;
-    let gold = 0, n = 0;
-    p.inventory.forEach((it, i) => {
-      if (it && it.cat === 'equip' && it.rarity === 'common' && !it.sockets) {
-        gold += L.price(it); p.inventory[i] = null; n++;
-      }
-    });
-    p.gold += gold;
-    if (n) G.log('出售了 ' + n + ' 件普通装备，获得 ' + gold + ' 金币', 'dim');
-    else G.log('没有可出售的普通装备', 'dim');
-    UI.dirty.inv = true; UI.dirty.vendor = true;
-    UI.refreshInventory();
-  };
-
-  // 出售魔法及以下的垃圾装备（保留比已装备更好的）
-  UI.sellMagicJunk = function () {
-    const p = UI.game.player;
-    let gold = 0, n = 0;
-    p.inventory.forEach((it, i) => {
-      if (!it || it.cat !== 'equip') return;
-      if (it.rarity !== 'common' && it.rarity !== 'magic') return;
-      let slot = it.slot;
-      if (slot === 'ring') slot = p.gear.ring1 ? 'ring1' : 'ring2';
-      const cur = p.gear[slot];
-      if (cur && L.score(it, p.stats) > L.score(cur, p.stats)) return; // 更好的留着
-      gold += L.price(it); p.inventory[i] = null; n++;
-    });
-    p.gold += gold;
-    if (n) G.log('出售了 ' + n + ' 件魔法及以下装备，获得 ' + gold + ' 金币', 'dim');
-    else G.log('没有可出售的魔法装备', 'dim');
     UI.dirty.inv = true; UI.dirty.vendor = true;
     UI.refreshInventory();
   };
@@ -2176,9 +2325,12 @@
     const dEl = el('hud-difficulty');
     if (dEl) { dEl.textContent = diff.name + ' ' + diff.roman; dEl.style.color = diff.color; dEl.style.borderColor = diff.color; }
     const inTown = g.area === 'town';
+    const inTrain = g.area === 'training';
     const hud = el('hud');
     if (hud && hud.classList) hud.classList.toggle('hud-town', inTown);
-    G.text('hud-floor', inTown ? '余烬营地 · 安全区' : ('深渊 第 ' + g.floor + ' 层' + (g.map && g.map.isBoss ? ' · BOSS' : '')));
+    G.text('hud-floor', inTown ? '余烬营地 · 安全区'
+      : inTrain ? ('训练场 · ' + ((D.trainingModeById(g.trainingMode) || {}).name || ''))
+        : ('深渊 第 ' + g.floor + ' 层' + (g.map && g.map.isBoss ? ' · BOSS' : '')));
     G.text('hud-mlvl', inTown ? ('存档位 ' + (g.slot + 1)) : ('怪物等级 ' + g.mlvl));
     G.text('gold-val', Math.floor(p.gold));
     G.text('hud-killed', g.killed);
@@ -2191,9 +2343,25 @@
         if (npc) obj.innerHTML = '与 <b class="c-rare">' + npc.name + '</b> 交谈：按 ' + K('pickup');
         else if (g.nearGate(110)) obj.innerHTML = '站上 <b class="c-unique">深渊之门</b> 按 ' + K('pickup') + ' 进入地牢';
         else obj.innerHTML = '营地内按 ' + K('town') + ' 建设 · ' + K('craft') + ' 做装 · ' + K('stash') + ' 仓库　南侧是深渊之门';
-      } else if (g.portalOpen) obj.innerHTML = '传送门已开启！前往 <b class="c-rare">紫色漩涡</b> 进入下一层（或按 ' + K('recall') + ' 回城）';
+      } else if (inTrain) obj.innerHTML = '尽情输出吧 —— 假人不会还手也打不死；离开走 <b class="c-rare">传送门</b> 按 ' + K('pickup');
+      else if (g.portalOpen) obj.innerHTML = '传送门已开启！前往 <b class="c-rare">紫色漩涡</b> 进入下一层（或按 ' + K('recall') + ' 回城）';
       else if (g.map && g.map.isBoss && g.bossAlive) obj.innerHTML = '击败 <b class="c-boss">BOSS</b> 以开启传送门　<b>' + g.killed + '/' + g.totalMonsters + '</b>';
       else obj.innerHTML = '清除怪物以开启传送门　<b>' + g.killed + '/' + g.totalMonsters + '</b>';
+    }
+    /* 训练场 DPS 面板：只在训练场显示 */
+    const dbox = el('dps-box');
+    if (dbox) {
+      if (dbox.hidden === inTrain) dbox.hidden = !inTrain;
+      if (inTrain) {
+        const t = g.train || null;
+        const now = g.trainDps ? g.trainDps(5) : 0;
+        G.text('dps-now', Math.round(now));
+        G.text('dps-peak', Math.round((t && t.peak) || 0));
+        G.text('dps-total', Math.round((t && t.total) || 0));
+        G.text('dps-detail', t ? (t.hits + ' 次命中' + (t.crits ? '　暴击 ' + t.crits : '')) : '—');
+        const md = D.trainingModeById ? D.trainingModeById(g.trainingMode) : null;
+        G.text('dps-mode', md ? md.name : '训练场');
+      }
     }
     const pc = el('potion-count');
     if (pc) pc.textContent = p.potions.life.count || 0;
@@ -2230,13 +2398,21 @@
   UI.bindPanels = function () {
     ['panel-inventory', 'panel-character', 'panel-vendor', 'panel-help',
       'panel-craft', 'panel-stash', 'panel-blacksmith', 'panel-town', 'panel-jeweler', 'panel-rift',
-      'panel-respec', 'panel-skill', 'panel-filter'].forEach((id) => {
+      'panel-respec', 'panel-skill', 'panel-filter', 'panel-confirm', 'panel-training'].forEach((id) => {
       const pnl = el(id);
       if (pnl) pnl.hidden = true;
     });
     Array.prototype.forEach.call(root.document.querySelectorAll ? root.document.querySelectorAll('[data-close]') : [], (b) => {
       b.addEventListener('click', () => UI.togglePanel(b.dataset.close, false));
     });
+    /* 通用确认框的两个按钮 */
+    const cok = el('btn-confirm-ok');
+    if (cok) cok.addEventListener('click', () => UI.confirmResolve(true));
+    const cno = el('btn-confirm-cancel');
+    if (cno) cno.addEventListener('click', () => UI.confirmResolve(false));
+    /* 商人的「一键卖出所有装备」 */
+    const sall = el('btn-sell-all');
+    if (sall) sall.addEventListener('click', UI.sellAllEquip);
     const menu = el('panel-menu');
     if (menu) menu.hidden = true;
     const br = el('btn-resume');
@@ -2287,14 +2463,16 @@
     }
     ['panel-inventory', 'panel-character', 'panel-vendor', 'panel-help',
       'panel-craft', 'panel-stash', 'panel-blacksmith', 'panel-town', 'panel-jeweler', 'panel-rift',
-      'panel-respec', 'panel-skill', 'panel-filter', 'panel-settings'].forEach((x) => {
+      'panel-respec', 'panel-skill', 'panel-filter', 'panel-settings', 'panel-confirm', 'panel-training'].forEach((x) => {
       const n = el(x);
       if (n && x !== id) n.hidden = true;
     });
     pnl.hidden = !show;
     UI.open = show ? id : null;
+    // 确认框被关掉（✕ / Esc / 切面板）＝ 取消，别把回调留着下次误触发
+    if (id === 'panel-confirm' && !show) UI._confirmCb = null;
     // 过滤器面板一关，导入 / 导出小窗也跟着关
-    if (id === 'panel-filter' && !show) UI.closeFilterIO();
+    if (id === 'panel-filter' && !show) { UI.closeFilterIO(); UI.closeAffixPick(); }
     // 锚点：只有从 NPC / 深渊之门打开的窗口才会因走远而自动关闭
     UI.anchor = show ? (anchor || null) : null;
     if (show) {
@@ -2890,6 +3068,139 @@
   };
 
   /* ============================================================
+   *  通用确认框：用于「镶有宝石的装备」「一键卖 / 一键分解」这类不可逆操作
+   * ============================================================ */
+  UI.askConfirm = function (opts) {
+    opts = opts || {};
+    UI._confirmCb = opts.onOk || null;
+    const t = el('confirm-title');
+    if (t) t.textContent = opts.title || '确认';
+    const x = el('confirm-text');
+    if (x) x.textContent = opts.text || '';
+    const ok = el('btn-confirm-ok');
+    if (ok) ok.textContent = opts.okText || '确认';
+    UI.togglePanel('panel-confirm', true);
+  };
+
+  UI.confirmResolve = function (yes) {
+    const cb = yes ? UI._confirmCb : null;
+    UI._confirmCb = null;
+    UI.togglePanel('panel-confirm', false);
+    if (typeof cb === 'function') cb();
+  };
+
+  /* 镶着宝石的装备：一键卖 / 一键分解都会跳过；单独动它之前先问一次 */
+  UI.hasGem = function (it) { return !!(it && it.gems && it.gems.some((g) => !!g)); };
+
+  UI.gemGuard = function (it, verb, run) {
+    if (typeof run !== 'function') return;
+    if (!UI.hasGem(it)) { run(); return; }
+    G.audio.play('noskill');
+    UI.askConfirm({
+      title: '装备上镶着宝石',
+      text: '「' + L.displayName(it) + '」上还镶着宝石，' + verb + '会连宝石一起丢掉。确定要' + verb + '吗？',
+      okText: '仍然' + verb,
+      onOk: run,
+    });
+  };
+
+  // 背包里的装备下标；skipGem = true 时把镶宝石的分到 gem 里
+  function bagEquips(p, skipGem) {
+    const list = [], gem = [];
+    (p.inventory || []).forEach((it, i) => {
+      if (!it || it.cat !== 'equip') return;
+      if (skipGem && UI.hasGem(it)) gem.push(i);
+      else list.push(i);
+    });
+    return { list: list, gem: gem };
+  }
+
+  /* ---------------- 一键卖出所有装备（商人） ---------------- */
+  UI.sellAllEquip = function () {
+    if (!UI.ready()) return;
+    const p = UI.game.player;
+    const s = bagEquips(p, true);
+    if (!s.list.length) { G.log('背包里没有可以出售的装备。', 'dim'); return; }
+    let gold = 0;
+    s.list.forEach((i) => { gold += L.price(p.inventory[i]); });
+    UI.askConfirm({
+      title: '一键卖出所有装备',
+      text: '卖出背包里的 ' + s.list.length + ' 件装备（含暗金 / 传奇），共 ' + gold + ' 金币。' +
+        (s.gem.length ? '另有 ' + s.gem.length + ' 件镶着宝石，会跳过。' : '') +
+        '宝石与通货石不会被卖出。',
+      okText: '卖出 ' + s.list.length + ' 件',
+      onOk: UI.sellAllEquipRun,
+    });
+  };
+
+  UI.sellAllEquipRun = function () {
+    const p = UI.game.player;
+    const s = bagEquips(p, true);
+    let gold = 0, n = 0;
+    s.list.forEach((i) => {
+      const it = p.inventory[i];
+      if (!it) return;
+      gold += L.price(it);
+      p.inventory[i] = null;
+      n++;
+    });
+    p.gold += gold;
+    if (n) {
+      G.audio.play('gold');
+      G.log('一键卖出 ' + n + ' 件装备，获得 ' + gold + ' 金币' +
+        (s.gem.length ? '（跳过 ' + s.gem.length + ' 件镶着宝石的）' : '') + '。', 'c-rare');
+    } else {
+      G.log('背包里没有可以出售的装备。', 'dim');
+    }
+    UI.dirty.inv = true; UI.dirty.vendor = true; UI.dirty.bs = true;
+    UI.refreshInventory();
+    if (UI.open === 'panel-vendor') UI.renderVendor();
+  };
+
+  /* ---------------- 一键分解所有装备（铁匠） ---------------- */
+  function salvageGain(it) { return Math.max(1, Math.round(L.salvageYield(it) * UI.salvageBonus())); }
+
+  UI.salvageAll = function () {
+    if (!UI.ready()) return;
+    const p = UI.game.player;
+    const s = bagEquips(p, true);
+    if (!s.list.length) { G.log('背包里没有可以分解的装备。', 'dim'); return; }
+    let gain = 0;
+    s.list.forEach((i) => { gain += salvageGain(p.inventory[i]); });
+    UI.askConfirm({
+      title: '一键分解所有装备',
+      text: '分解背包里的 ' + s.list.length + ' 件装备（含暗金 / 传奇），共获得 ' + gain + ' 深渊残晶。' +
+        (s.gem.length ? '另有 ' + s.gem.length + ' 件镶着宝石，会跳过。' : ''),
+      okText: '分解 ' + s.list.length + ' 件',
+      onOk: UI.salvageAllRun,
+    });
+  };
+
+  UI.salvageAllRun = function () {
+    const p = UI.game.player;
+    const s = bagEquips(p, true);
+    let gain = 0, n = 0;
+    s.list.forEach((i) => {
+      const it = p.inventory[i];
+      if (!it) return;
+      gain += salvageGain(it);
+      p.inventory[i] = null;
+      n++;
+    });
+    p.shards = (p.shards || 0) + gain;
+    if (n) {
+      G.audio.play('hit');
+      G.log('一键分解 ' + n + ' 件装备，获得 ' + gain + ' 深渊残晶' +
+        (s.gem.length ? '（跳过 ' + s.gem.length + ' 件镶着宝石的）' : '') + '。', 'c-magic');
+    } else {
+      G.log('背包里没有可以分解的装备。', 'dim');
+    }
+    UI.dirty.inv = true; UI.dirty.bs = true; UI.dirty.town = true;
+    UI.refreshInventory();
+    if (UI.open === 'panel-blacksmith') UI.renderBlacksmith();
+  };
+
+  /* ============================================================
    *  铁匠铺：分解装备
    * ============================================================ */
   UI.bindBlacksmith = function () {
@@ -2897,43 +3208,54 @@
     if (j) j.addEventListener('click', () => UI.salvageBulk(['common']));
     const m = el('btn-salvage-magic');
     if (m) m.addEventListener('click', () => UI.salvageBulk(['common', 'magic']));
+    const a = el('btn-salvage-all');
+    if (a) a.addEventListener('click', UI.salvageAll);
     const t = el('btn-bs-town');
     if (t) t.addEventListener('click', () => UI.togglePanel('panel-town'));
   };
 
   UI.salvageBonus = function () { return G.Town.salvageBonus(UI.game.player); };
 
+  /* 分解界面与商人 / 工坊统一：直接铺开背包格子，点一下就分解 */
   UI.renderBlacksmith = function () {
     if (!UI.ready()) return;
     const p = UI.game.player;
     G.text('bs-shards', p.shards || 0);
     const bonus = el('bs-bonus');
     if (bonus) bonus.textContent = '铁匠铺 ' + G.Town.level(p, 'forge') + ' 级：分解产出 ×' + UI.salvageBonus().toFixed(2);
-    const box = el('bs-list');
-    if (!box) return;
-    box.innerHTML = '';
-    const equips = [];
-    p.inventory.forEach((it, i) => { if (it && it.cat === 'equip') equips.push({ it, i }); });
-    if (!equips.length) {
-      const none = root.document.createElement('div');
-      none.className = 'hint dim';
-      none.textContent = '背包里没有可以分解的装备。';
-      box.appendChild(none);
+    const grid = el('bs-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    const inv = p.inventory;
+    let count = 0, sum = 0, gemN = 0;
+    for (let i = 0; i < inv.length; i++) {
+      const it = inv[i];
+      const c = root.document.createElement('div');
+      c.className = UI.cellClass(it) + (it && it.cat !== 'equip' ? ' dim' : '');
+      c.innerHTML = UI.cellInner(it);
+      if (it && it.cat === 'equip') {
+        const gain = salvageGain(it);
+        count++; sum += gain;
+        if (UI.hasGem(it)) gemN++;
+        c.title = '分解可得 ' + gain + ' 深渊残晶';
+        UI.bindCellEvents(c, () => UI.game.player.inventory[i], {
+          onLeft: () => UI.salvageAt(i),
+          onRight: () => UI.salvageAt(i),
+        });
+      } else {
+        UI.bindCellEvents(c, () => UI.game.player.inventory[i], {
+          onLeft: () => G.log('只有装备能分解成残晶。', 'dim'),
+          onRight: () => G.log('只有装备能分解成残晶。', 'dim'),
+        });
+      }
+      grid.appendChild(c);
     }
-    equips.forEach((e) => {
-      const gain = Math.max(1, Math.round(L.salvageYield(e.it) * UI.salvageBonus()));
-      const row = root.document.createElement('div');
-      row.className = 'vitem';
-      row.innerHTML = '<span class="vi" style="color:' + G.RARITY_COLOR[e.it.rarity] + '">' + itemGlyph(e.it) + '</span>' +
-        '<span class="vn" style="color:' + G.RARITY_COLOR[e.it.rarity] + '">' + L.displayName(e.it) +
-        '<div class="hint">' + L.typeName(e.it) + '　物品等级 ' + e.it.ilvl + '　词缀 ' + e.it.affixes.length + '</div></span>' +
-        '<span class="vp" style="color:#9fe8ff">+' + gain + ' 残晶</span>';
-      row.addEventListener('mouseenter', (ev) => UI.tooltip(e.it, ev, { compare: false }));
-      row.addEventListener('mousemove', (ev) => UI.tooltip(e.it, ev, { compare: false }));
-      row.addEventListener('mouseleave', UI.hideTooltip);
-      row.addEventListener('click', () => UI.salvageAt(e.i));
-      box.appendChild(row);
-    });
+    const sumEl = el('bs-sum');
+    if (sumEl) {
+      sumEl.textContent = count
+        ? ('可分解 ' + count + ' 件　合计 +' + sum + ' 残晶' + (gemN ? '　（' + gemN + ' 件镶宝石，单独分解会先询问）' : ''))
+        : '背包里没有可以分解的装备。';
+    }
     UI.dirty.bs = false;
   };
 
@@ -2941,11 +3263,19 @@
     const p = UI.game.player;
     const it = p.inventory[i];
     if (!it || it.cat !== 'equip') return;
-    const gain = Math.max(1, Math.round(L.salvageYield(it) * UI.salvageBonus()));
+    UI.gemGuard(it, '分解', () => UI.salvageAtRun(i));
+  };
+
+  UI.salvageAtRun = function (i) {
+    const p = UI.game.player;
+    const it = p.inventory[i];
+    if (!it || it.cat !== 'equip') return;
+    const gain = salvageGain(it);
     p.inventory[i] = null;
     p.shards = (p.shards || 0) + gain;
     G.audio.play('hit');
     G.log('分解 ' + L.displayName(it) + '，获得 ' + gain + ' 深渊残晶。', 'c-magic');
+    if (UI.hasGem(it)) G.log('（这件装备上的宝石一起没了）', 'dim');
     UI.dirty.inv = true; UI.dirty.bs = true; UI.dirty.town = true;
     UI.refreshInventory();
     UI.renderBlacksmith();
@@ -2953,18 +3283,21 @@
 
   UI.salvageBulk = function (rarities) {
     const p = UI.game.player;
-    let n = 0, gain = 0;
+    let n = 0, gain = 0, gem = 0;
     p.inventory.forEach((it, i) => {
       if (!it || it.cat !== 'equip') return;
       if (rarities.indexOf(it.rarity) < 0) return;
+      // 镶着宝石的不动它
+      if (UI.hasGem(it)) { gem++; return; }
       // 比已装备更好的留下
       const cur = L.equippedFor(p, it);
       if (cur && L.score(it, p.stats) > L.score(cur, p.stats)) return;
-      gain += Math.max(1, Math.round(L.salvageYield(it) * UI.salvageBonus()));
+      gain += salvageGain(it);
       p.inventory[i] = null; n++;
     });
     p.shards = (p.shards || 0) + gain;
-    G.log(n ? ('分解了 ' + n + ' 件装备，获得 ' + gain + ' 深渊残晶。') : '没有可分解的装备。', n ? 'c-magic' : 'dim');
+    G.log(n ? ('分解了 ' + n + ' 件装备，获得 ' + gain + ' 深渊残晶。' + (gem ? '（跳过 ' + gem + ' 件镶着宝石的）' : ''))
+      : '没有可分解的装备。', n ? 'c-magic' : 'dim');
     UI.dirty.inv = true; UI.dirty.bs = true; UI.dirty.town = true;
     UI.refreshInventory();
     UI.renderBlacksmith();
@@ -3820,6 +4153,32 @@
     UI.dirty.craft = true; UI.dirty.stash = true; UI.dirty.bs = true;
     UI.dirty.town = true; UI.dirty.jeweler = true; UI.dirty.rift = true;
     UI.updateHUD();
+  };
+
+  /* ============================================================
+   *  训练场（戈登）
+   * ============================================================ */
+  UI.buildTraining = function () {
+    const box = el('training-modes');
+    if (!box) return;
+    box.innerHTML = '';
+    D.TRAINING_MODES.forEach((m) => {
+      const b = root.document.createElement('button');
+      b.className = 'btn big tmode';
+      b.dataset.mode = m.id;
+      b.innerHTML = m.name + '<span class="dim small">' + m.desc + '</span>';
+      b.addEventListener('click', () => UI.startTraining(m.id));
+      box.appendChild(b);
+    });
+    const t = el('btn-training-town');
+    if (t) t.addEventListener('click', () => UI.togglePanel('panel-town'));
+  };
+
+  UI.startTraining = function (mode) {
+    if (!UI.ready()) return;
+    if (UI.game.area !== 'town') { G.log('训练场要从营地的训练大师戈登那里进。', 'c-boss'); return; }
+    UI.togglePanel('panel-training', false);
+    UI.game.enterTraining(mode);
   };
 
   /* ============================================================

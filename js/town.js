@@ -42,7 +42,7 @@
     { id: 'crafter', name: '秘法工匠 维恩', title: '做装工坊', glyph: '⚗', color: '#7aa8ff', panel: 'panel-craft', tx: 37, ty: 12 },
     { id: 'priest', name: '祭司 娜塔', title: '祭坛 · 城镇建设', glyph: '⛩', color: '#d98b2b', panel: 'panel-town', tx: 23, ty: 10 },
     { id: 'keeper', name: '仓库管理员 米尔', title: '仓库', glyph: '▤', color: '#cbb894', panel: 'panel-stash', tx: 37, ty: 17 },
-    { id: 'trainer', name: '训练大师 戈登', title: '训练场 · 城镇建设', glyph: '⚔', color: '#9fe06a', panel: 'panel-town', building: 'trainyard', tx: 8, ty: 17 },
+    { id: 'trainer', name: '训练大师 戈登', title: '训练场 · 城镇建设', glyph: '⚔', color: '#9fe06a', panel: 'panel-training', building: 'trainyard', tx: 8, ty: 17 },
     { id: 'vendor', name: '流浪商人 加兹', title: '交易', glyph: '⚖', color: '#ffe45c', panel: 'panel-vendor', tx: 20, ty: 19 },
     { id: 'jeweler', name: '珠宝匠 凯', title: '宝石合成', glyph: '◆', color: '#8ce07a', panel: 'panel-jeweler', tx: 26, ty: 19 },
     { id: 'guide', name: '深渊向导 塞拉', title: '洗点 · 重塑', glyph: '⌂', color: '#c07aff', panel: 'panel-respec', tx: 20, ty: 32 },
@@ -237,7 +237,9 @@
     player.gold -= r.cost.gold;
     player.shards = (player.shards || 0) - r.cost.shards;
     player.town.buildings[id] = lv + 1;
-    return { ok: true, level: lv + 1, cost: r.cost };
+    // 仓库升级顺带扩背包
+    const added = (id === 'vault') ? T.growBag(player) : 0;
+    return { ok: true, level: lv + 1, cost: r.cost, bagAdded: added };
   };
 
   /* ---------------- 建筑加成（服务类） ---------------- */
@@ -245,6 +247,16 @@
   T.shardBonus = (player) => 1 + T.level(player, 'workshop') * 0.2;
   T.salvageBonus = (player) => 1 + (T.level(player, 'forge') - 1) * 0.25;
   T.stashCap = (player) => D.BUILDING_VAULT_CAP(T.level(player, 'vault'));
+  // 背包格数：由仓库等级决定（1 级 60 格，每级 +5，满级 80）
+  T.bagCap = (player) => D.BUILDING_BAG_CAP(T.level(player, 'vault'));
+  // 仓库升级后把背包数组补到新容量（只增不减，避免把东西挤掉）
+  T.growBag = function (player) {
+    if (!player || !player.inventory) return 0;
+    const cap = T.bagCap(player);
+    let added = 0;
+    while (player.inventory.length < cap) { player.inventory.push(null); added++; }
+    return added;
+  };
 
   T.npcAt = function (m, x, y, r) {
     if (!m || !m.npcs) return null;

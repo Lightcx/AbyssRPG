@@ -126,7 +126,7 @@
       attrPoints: 0, skillPoints: 0, passivePoints: 0,
       skillBranches: {}, guideMet: false,
       alloc: { str: 0, dex: 0, int: 0, vit: 0 },
-      passives: {}, skills: {}, gear: {}, inventory: new Array(60).fill(null),
+      passives: {}, skills: {}, gear: {}, inventory: new Array((G.Town && G.Town.bagCap) ? G.Town.bagCap(null) : 60).fill(null),
       stash: new Array(G.Town ? G.Town.stashCap(null) : 40).fill(null),
       town: G.Town ? G.Town.defaultTown() : { buildings: {} },
       maxFloor: 1,
@@ -548,6 +548,16 @@
   };
 
   ENT.updateMonster = function (game, m, dt) {
+    /* 训练假人：不移动、不攻击、也打不死，只负责挨打 */
+    if (m.def && m.def.dummy) {
+      m.hitFlash = Math.max(0, (m.hitFlash || 0) - dt);
+      m.spawnT = Math.max(0, (m.spawnT || 0) - dt);
+      m.dead = false; m.deadT = 0; m.aggro = false;
+      m.life = m.maxLife;
+      m.slow = null;
+      m.kx = 0; m.ky = 0;
+      return;
+    }
     m.animT += dt;
     m.hitFlash = Math.max(0, m.hitFlash - dt);
     if (m.dead) { m.deadT -= dt; return; }

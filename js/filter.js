@@ -69,9 +69,10 @@
       get: (it) => (D.baseById(it.base) || {}).type || it.type || '',
     },
     {
-      id: 'affix', name: '包含词缀', value: 'text',
-      ops: [{ id: 'has', name: '包含' }, { id: 'not', name: '不含' }],
-      get: (it) => (it.affixes || []).map((a) => a.name + ' ' + D.statText(a.stat, a.value) + ' ' + a.stat).join(' | '),
+      // 勾选词缀 + 「至少包含 N 条」：value 存最少条数，affixIds 存勾选的词缀 id
+      id: 'affix', name: '包含词缀', value: 'affixPick', min: 1, max: 12,
+      ops: [{ id: 'has', name: '包含至少' }, { id: 'not', name: '不含这么多' }],
+      get: (it, ctx, cond) => F.countAffixes(it, cond),
     },
     {
       id: 'reqLevel', name: '需求等级', value: 'number', min: 0, max: 100,
@@ -138,6 +139,58 @@
     const a = cond && cond.attr;
     return F.ATTR_OPTIONS.some((o) => o.id === a) ? a : 'any';
   };
+
+  /* ---------------- 「包含词缀」：勾选 + 至少 N 条 ---------------- */
+  F.affixIds = (cond) => ((cond && Array.isArray(cond.affixIds)) ? cond.affixIds.filter((id) => !!id) : []);
+  F.affixMin = (cond) => {
+    const n = Math.round(Number(cond && cond.value));
+    return (isFinite(n) && n > 0) ? n : 1;
+  };
+  // 这件装备命中了勾选词缀里的几条
+  F.countAffixes = function (item, cond) {
+    const want = F.affixIds(cond);
+    if (!want.length) return 0;
+    const have = {};
+    (item.affixes || []).forEach((a) => { if (a && a.id) have[a.id] = 1; });
+    let n = 0;
+    want.forEach((id) => { if (have[id]) n++; });
+    return n;
+  };
+
+  /* 规则里的「装备部位 / 装备类型」细则会锁定可选部位；返回 null = 没有限制。
+   * slot 细则取并集、type 细则按基底表反查部位，多个细则之间取交集。 */
+  const SLOT_GROUP_MEMBERS = { armor: ['helm', 'chest', 'gloves', 'boots', 'belt'], jewelry: ['ring', 'amulet'] };
+  F.allowedSlots = function (conds) {
+    let out = null;
+    const narrow = (list) => { out = out ? out.filter((s) => list.indexOf(s) >= 0) : list.slice(); };
+    (conds || []).forEach((c) => {
+      if (!c) return;
+      if (c.type === 'slot' && c.op !== 'not') narrow(SLOT_GROUP_MEMBERS[c.value] || [String(c.value)]);
+      if (c.type === 'type' && c.op === 'is') {
+        const slots = {};
+        (D.BASES || []).forEach((b) => { if (b.type === c.value) slots[b.slot] = 1; });
+        const list = Object.keys(slots);
+        if (list.length) narrow(list);
+      }
+    });
+    return out;
+  };
+
+  /* 词缀选择面板的可选池。
+   * hideConflict = true 且规则锁定了部位 / 类型时，只留下真的会出现在那些部位上的词缀。 */
+  F.affixPool = function (conds, hideConflict) {
+    const all = D.AFFIXES.slice();
+    if (hideConflict === false) return all;
+    const slots = F.allowedSlots(conds);
+    if (!slots || !slots.length) return all;
+    const blocked = {};
+    D.gearSlots().forEach((raw) => {
+      const s = (raw === 'ring1' || raw === 'ring2') ? 'ring' : raw;
+      if (slots.indexOf(s) >= 0) return;                 // 这个部位允许 → 它的词缀都算合法
+      D.affixesForSlot(s, 'prefix').concat(D.affixesForSlot(s, 'suffix')).forEach((a) => { blocked[a.id] = 1; });
+    });
+    return all.filter((a) => !blocked[a.id]);
+  };
   F.clampValue = function (typeId, v) {
     const t = F.condType(typeId);
     if (t.value !== 'number') return v;
@@ -146,7 +199,8 @@
     return G.clamp(n, t.min == null ? 0 : t.min, t.max == null ? 99999 : t.max);
   };
   /* 老存档 / 导入的数据换个名字也能用：
-   * 力量 / 敏捷 / 智力 → 需求属性（取三者最高），「名称包含」已废弃 → 丢掉该细则 */
+   * 力量 / 敏捷 / 智力 → 需求属性（取三者最高），「名称包含」已废弃 → 丢掉该细则，
+   * 老的「包含词缀」是文本框写的，模型已换成勾选 → 也丢掉（按用户要求清空） */
   F.migrateConds = function (conds) {
     const list = [];
     (conds || []).forEach((c) => {
@@ -154,6 +208,7 @@
       let type = c.type;
       if (type === 'reqStr' || type === 'reqDex' || type === 'reqInt') type = 'reqAttr';
       if (!F.hasCond(type)) return;
+      if (type === 'affix' && !Array.isArray(c.affixIds)) return;   // 老的文字条件：清空
       const t = F.condType(type);
       const one = {
         type: type,
@@ -161,12 +216,16 @@
         value: t.value === 'number' ? F.clampValue(type, c.value) : c.value,
       };
       if (t.attrPick) one.attr = F.attrOf(c);
+      if (t.value === 'affixPick') {
+        one.affixIds = F.affixIds(c).slice(0, 60);
+        one.value = G.clamp(Math.round(Number(c.value) || 1), 1, 12);
+      }
       list.push(one);
     });
     return list;
   };
 
-  F.data = { enabled: true, name: '默认过滤器', rules: [] };
+  F.data = { enabled: true, name: '默认过滤器', rules: [], hideConflict: true };
 
   /* ---------------- 存取 ---------------- */
   F.load = function () {
@@ -178,7 +237,8 @@
           F.data = {
             enabled: d.enabled !== false,
             name: d.name || '默认过滤器',
-            // 老存档里的细则名（需求力量 / 敏捷 / 智力、名称包含）在这里顺手转换 / 丢弃
+            hideConflict: d.hideConflict !== false,
+            // 老存档里的细则名（需求力量 / 敏捷 / 智力、名称包含、文本框写的词缀）在这里顺手转换 / 丢弃
             rules: d.rules.slice(0, F.MAX_RULES).map((r) => ({
               action: F.ACTIONS.some((a) => a.id === r.action) ? r.action : 'hide',
               enabled: r.enabled !== false,
@@ -204,6 +264,22 @@
     F.data.rules.push(rule || F.newRule());
     return true;
   };
+  /* 新增规则默认插到最前面：新写的规则立刻生效，不用手动往上挪 */
+  F.insertRule = function (rule) {
+    if (F.data.rules.length >= F.MAX_RULES) return false;
+    F.data.rules.unshift(rule || F.newRule());
+    return true;
+  };
+  /* 拖拽排序：把第 from 条挪到第 to 条的位置 */
+  F.moveRuleTo = function (from, to) {
+    const rs = F.data.rules;
+    if (!(from >= 0 && from < rs.length)) return false;
+    const t = G.clamp(to | 0, 0, rs.length - 1);
+    if (t === from) return false;
+    const one = rs.splice(from, 1)[0];
+    rs.splice(t, 0, one);
+    return true;
+  };
   F.removeRule = function (i) {
     if (i < 0 || i >= F.data.rules.length) return;
     F.data.rules.splice(i, 1);
@@ -226,6 +302,7 @@
       F.data = {
         enabled: d.enabled !== false,
         name: d.name || '导入的过滤器',
+        hideConflict: d.hideConflict !== false,
         rules: d.rules.map((r) => ({
           action: F.ACTIONS.some((a) => a.id === r.action) ? r.action : 'hide',
           enabled: r.enabled !== false,
@@ -266,6 +343,13 @@
       case 'rarity': return cond.op === 'not' ? raw !== v : raw === v;
       case 'slot': return cond.op === 'not' ? !slotMatches(item, v) : slotMatches(item, v);
       case 'type': return String(raw) === String(v);
+      case 'affixPick': {
+        const want = F.affixIds(cond);
+        if (!want.length) return true;                    // 一条词缀都没勾 → 这条细则不参与筛选
+        const hit = F.countAffixes(item, cond);
+        const min = F.affixMin(cond);
+        return cond.op === 'not' ? hit < min : hit >= min;
+      }
       case 'bool': {
         const b = cond.type === 'canEquip' ? !!(ctx && ctx.canEquip) : boolOf(raw);
         return cond.op === 'is' ? b === boolOf(v) : b !== boolOf(v);
@@ -311,6 +395,14 @@
       if (t.value === 'rarity') val = (RARITY.filter((r) => r.id === c.value)[0] || { name: c.value }).name;
       if (t.value === 'slot') val = (SLOT_GROUPS.filter((r) => r.id === c.value)[0] || { name: c.value }).name;
       if (t.value === 'bool') val = boolOf(c.value) ? '是' : '否';
+      if (t.value === 'affixPick') {
+        const ids = F.affixIds(c);
+        const names = ids.map((id) => (D.affixById[id] || {}).name || id);
+        const head = (c.op === 'not' ? '不含这么多：' : '至少 ') + F.affixMin(c) + ' 条';
+        const tail = names.length ? '（' + names.slice(0, 3).join(' / ') + (names.length > 3 ? ' 等 ' + names.length + ' 条' : '') + '）'
+          : '（还没勾选词缀）';
+        return t.name + ' ' + head + tail;
+      }
       // 「需求属性」会额外带上选中的那一项（力量 / 敏捷 / 智力 / 任意）
       const attr = t.attrPick ? ((F.ATTR_OPTIONS.filter((a) => a.id === F.attrOf(c))[0] || {}).name || '') + ' ' : '';
       return t.name + ' ' + attr + op + ' ' + val;

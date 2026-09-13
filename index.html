@@ -27,6 +27,15 @@
       </div>
     </div>
 
+    <!-- 训练场 DPS 面板（只在训练场显示） -->
+    <div id="dps-box" hidden>
+      <div class="dp-hd">训练场 DPS</div>
+      <div class="dp-r"><span>当前 DPS</span><b id="dps-now">0</b></div>
+      <div class="dp-r"><span>峰值 DPS</span><b id="dps-peak">0</b></div>
+      <div class="dp-r"><span>总伤害</span><b id="dps-total">0</b></div>
+      <div class="dp-r dim"><span id="dps-detail">0 次命中</span><b id="dps-mode">单个假人</b></div>
+    </div>
+
     <div id="minimap-wrap">
       <canvas id="minimap" width="180" height="180"></canvas>
       <div id="minimap-label">M 地图</div>
@@ -81,9 +90,8 @@
           <div class="grid" id="inv-grid"></div>
           <footer class="inv-foot">
             <span>金币 <b id="inv-gold">0</b></span>
+            <span class="dim small" id="inv-cap"></span>
             <button class="btn" id="btn-sort">整理</button>
-            <button class="btn" id="btn-sell-junk">出售白装</button>
-            <button class="btn" id="btn-sell-magic">出售魔法及以下</button>
             <button class="btn" id="btn-filter">过滤器</button>
           </footer>
         </div>
@@ -118,6 +126,10 @@
         <div class="col-sell">
           <h3>出售（点击物品出售）</h3>
           <div id="vendor-inv" class="grid small"></div>
+          <footer class="inv-foot">
+            <button class="btn" id="btn-sell-all">一键卖出所有装备</button>
+          </footer>
+          <p class="hint">只卖装备：宝石与通货石不会被卖出；镶有宝石的装备会先询问一次。</p>
         </div>
       </div>
     </section>
@@ -217,6 +229,21 @@
           </div>
         </div>
       </div>
+      <!-- 词缀选择（勾选式）：盖在过滤器面板上，不参与 togglePanel -->
+      <div class="flt-io afx" id="affix-pick" hidden>
+        <div class="flt-io-box afx-box">
+          <h3>选择词缀 <span class="dim small" id="affix-pick-count"></span></h3>
+          <p class="hint dim" id="affix-pick-hint"></p>
+          <label class="flt-toggle"><input type="checkbox" id="affix-hide-conflict"> 隐藏与装备筛选冲突的词缀</label>
+          <div class="afx-list" id="affix-list"></div>
+          <div class="flt-foot">
+            <button class="btn" id="btn-affix-none">全不选</button>
+            <button class="btn" id="btn-affix-ok">确定</button>
+            <button class="btn" id="btn-affix-close">取消</button>
+            <span class="dim small" id="affix-msg"></span>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- 铁匠铺 -->
@@ -226,11 +253,14 @@
         <div class="bs-head">
           <span>深渊残晶 <b id="bs-shards">0</b></span>
           <span class="dim small" id="bs-bonus"></span>
+          <span class="dim small" id="bs-sum"></span>
           <button class="btn" id="btn-salvage-junk">分解所有白装</button>
           <button class="btn" id="btn-salvage-magic">分解魔法及以下</button>
+          <button class="btn" id="btn-salvage-all">一键分解所有装备</button>
           <button class="btn" id="btn-bs-town">城镇建设</button>
         </div>
-        <div id="bs-list" class="vlist"></div>
+        <p class="hint">点击背包里的装备即可分解；镶有宝石的装备会先询问一次。</p>
+        <div id="bs-grid" class="grid"></div>
       </div>
     </section>
 
@@ -385,6 +415,31 @@
         <div class="settings-foot">
           <button class="btn" id="btn-bind-reset">恢复默认按键</button>
           <button class="btn" id="btn-sound">音效：开</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 训练场（戈登） -->
+    <section class="panel" id="panel-training" hidden>
+      <header><h2>训练大师 · 戈登</h2><button class="close" data-close="panel-training">✕</button></header>
+      <div class="pbody menu-body">
+        <p class="dim">进训练场打假人，测你自己的伤害。假人不会还手、也打不死，屏幕左上角会实时显示 DPS。</p>
+        <div id="training-modes" class="menu-btns"></div>
+        <p class="hint dim">测完从旁边的传送门按 F 离开（或脱战后按 T 回城）。训练场里的伤害不会影响深渊进度。</p>
+        <div class="settings-foot">
+          <button class="btn" id="btn-training-town">城镇建设</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 通用确认框 -->
+    <section class="panel center" id="panel-confirm" hidden>
+      <header><h2 id="confirm-title">确认</h2></header>
+      <div class="pbody menu-body">
+        <p id="confirm-text" class="dim"></p>
+        <div class="menu-btns">
+          <button class="btn big" id="btn-confirm-ok">确认</button>
+          <button class="btn big" id="btn-confirm-cancel">取消</button>
         </div>
       </div>
     </section>

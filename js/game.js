@@ -160,9 +160,9 @@
     if (G.UI && G.UI.openNpcPanel) G.UI.openNpcPanel(npc);
   };
 
-  // 地牢入口处的回城传送门
+  // 地牢入口处 / 训练场的回城传送门
   Game.prototype.townPortalAt = function (x, y, r) {
-    if (this.area !== 'dungeon' || !this.map || !this.map.townPortal) return false;
+    if ((this.area !== 'dungeon' && this.area !== 'training') || !this.map || !this.map.townPortal) return false;
     return G.dist(x, y, this.map.townPortal.x, this.map.townPortal.y) < (r || 46);
   };
 
@@ -174,6 +174,7 @@
       for (let i = 0; i < this.monsters.length; i++) {
         const m = this.monsters[i];
         if (m.dead || m.spawnT > 0) continue;
+        if (m.def && m.def.dummy) continue;               // 训练假人拦不住回城
         if (G.dist(m.x, m.y, this.player.x, this.player.y) < 300) { near = m; break; }
       }
       if (near) { this.log('附近还有敌人，无法使用回城（先脱离战斗）。', 'c-boss'); G.audio.play('noskill'); return false; }
@@ -181,7 +182,8 @@
     const left = this.pickups.filter((pk) => pk.item && pk.item.cat === 'equip' &&
       !G.UI.filterHidden(pk.item)).length;
     if (left) this.log('你离开了地牢，地上遗留的 ' + left + ' 件装备被深渊吞没了。', 'dim');
-    this.floorCache = this.serializeFloor();      // 记住这一层，回来时原样恢复
+    // 只有从深渊里出来才需要记住这一层；从训练场出来别把练功房当成地牢缓存
+    if (this.area === 'dungeon') this.floorCache = this.serializeFloor();
     this.enterTown({});
     return true;
   };
@@ -402,8 +404,109 @@
     this.enterFloor(this.floor + 1);
   };
 
+  /* ============================================================
+   *  训练场（戈登）
+   *  ------------------------------------------------------------
+   *  独立场景：不刷怪、不掉落、不算进度；假人不会还手也打不死，
+   *  用来测伤害。进来时保留原本的深渊层缓存，走出去（传送门 / 回城）
+   *  就回营地，再进深渊还是原来那一层。
+   * ============================================================ */
+  Game.prototype.resetTrain = function () {
+    const t = this.clock || 0;
+    this.train = { total: 0, hits: 0, crits: 0, peak: 0, session: t, last: t, log: [] };
+  };
+
+  Game.prototype.trainHit = function (dmg, crit) {
+    if (!(dmg > 0)) return;
+    if (!this.train) this.resetTrain();
+    const t = this.train;
+    const now = this.clock || 0;
+    if (now - t.last > 3) { t.session = now; t.log.length = 0; }   // 停手超过 3 秒 → 重新算一段
+    t.total += dmg;
+    t.hits++;
+    if (crit) t.crits++;
+    t.last = now;
+    t.log.push({ t: now, d: dmg });
+    if (t.log.length > 800) t.log.splice(0, t.log.length - 800);
+  };
+
+  // 最近 win 秒的平均 DPS（会顺手记录峰值）
+  Game.prototype.trainDps = function (win) {
+    const t = this.train;
+    if (!t || !t.log.length) return 0;
+    const now = this.clock || 0, w = win || 5;
+    let sum = 0;
+    for (let i = t.log.length - 1; i >= 0; i--) {
+      const e = t.log[i];
+      if (now - e.t > w) break;
+      sum += e.d;
+    }
+    const span = G.clamp(now - (t.session || now), 0.5, w);
+    const dps = sum / span;
+    if (dps > t.peak) t.peak = dps;
+    return dps;
+  };
+
+  Game.prototype.enterTraining = function (mode) {
+    if (!this.player) return false;
+    const md = D.trainingModeById ? D.trainingModeById(mode) : { id: 'single', name: '训练场' };
+    // 正在深渊里直接进练功房的话，先把这一层记下来，回头还能接着打
+    if (this.area === 'dungeon' && this.map) this.floorCache = this.serializeFloor();
+    this.area = 'training';
+    this.trainingMode = md.id;
+    const map = G.Dungeon.makeTraining(this.rng, { mode: md.id });
+    this.map = map;
+    this.explored = new Uint8Array(map.w * map.h);
+    this.explored.fill(1);                       // 练功房不用探索
+    this.killed = 0;
+    this.totalMonsters = 0;
+    this.portalOpen = false;
+    this.portalOpenAt = 0;
+    this.phoenixUsed = false;
+    this.bossAlive = false;
+    this.monsters = [];
+    this.projectiles = [];
+    this.grounds = [];
+    this.pickups = [];
+    this.props = [];
+    this.particles = [];
+    this.texts = [];
+    this.fx = [];
+    this.resetTrain();
+
+    const p = this.player;
+    p.x = map.playerStart.x;
+    p.y = map.playerStart.y;
+    p.moveTarget = null; p.attackTarget = null; p.pendingPickup = null; p.pendingNpc = null;
+    p.aimAttack = false; p.forceAim = false; p.jump = null;
+    p.invuln = 1.5;
+    p.dots = [];
+
+    (map.dummySpots || []).forEach((sp) => {
+      const mo = ENT.makeMonster(this, sp.def, sp.x, sp.y);
+      if (!mo) return;
+      mo.maxLife = mo.life = 1e12;      // 厚到打不死
+      mo.dmg = 0;
+      mo.aggro = false;
+      mo.spawnT = 0;
+      mo.dummy = true;
+      mo.elite = false;
+      if (sp.def === 'dummy_boss') mo.isBoss = true;
+      this.monsters.push(mo);
+    });
+
+    this.log('—— 训练场 · ' + md.name + ' ——　假人不会还手也打不死，屏幕左下角显示 DPS。', 'c-rare');
+    this.log('测完从旁边的传送门按 ' + G.Settings.actionLabel('pickup', 'F') + ' 离开（或脱战后按 ' + G.Settings.actionLabel('recall', 'T') + '）。', 'dim');
+    G.audio.play('portal');
+    this.autosaveTimer = 0;
+    if (G.UI.game === this) { G.UI.anchor = null; G.UI.onAreaChanged(); }
+    this.save();
+    return true;
+  };
+
   Game.prototype.checkFloorClear = function () {
     if (this.portalOpen) return;
+    if (!this.totalMonsters) return;          // 城镇 / 训练场没有怪物，也没传送门要开
     if (this.map && this.map.isBoss) {
       if (!this.bossAlive) {
         this.openPortal();
@@ -675,6 +778,7 @@
   Game.prototype.update = function (dtRaw) {
     const dt = Math.min(0.05, Math.max(0.0005, dtRaw));
     this.frame++;
+    this.clock = (this.clock || 0) + dt;      // 训练场 DPS 用的累计时间
     if (!this.started || !this.player) return;
 
     /* 全局按键 */
@@ -814,8 +918,9 @@
       p.buffs = data.buffs.filter((b) => b && b.remaining > 0).map((b) => Object.assign({}, b));
     }
     if (data.inventory && data.inventory.length) {
-      p.inventory = data.inventory.slice(0, 60);
-      while (p.inventory.length < 60) p.inventory.push(null);
+      const bagCap = (G.Town && G.Town.bagCap) ? G.Town.bagCap(p) : 60;
+      p.inventory = data.inventory.slice(0, bagCap);
+      while (p.inventory.length < bagCap) p.inventory.push(null);
     }
     if (data.gear) p.gear = data.gear;
     // 清理失效装备
@@ -845,7 +950,7 @@
     this.started = true;
     /* 只保留当前层的缓存：层数对得上才用 */
     this.floorCache = (data.floorCache && data.floorCache.floor === this.floor) ? data.floorCache : null;
-    if (data.area === 'town') {
+    if (data.area === 'town' || data.area === 'training') {
       this.enterTown({ silent: true });
       this.log('读档成功：' + G.DATA.classById(p.cls).name + ' Lv.' + p.level + '（余烬营地）', 'c-rare');
     } else {

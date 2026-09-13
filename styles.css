@@ -255,7 +255,8 @@ b{color:#f0e2c0;font-weight:600}
 .gear-doll>[data-slot="ring2"]{grid-area:4/3/5/4}
 .doll{margin-bottom:12px}
 /* 装备栏：格子做成正方形（宽度由列宽决定，高度跟着走）；背包与做装工坊共用 */
-.gear-doll{max-width:282px}
+.gear-doll{max-width:282px;min-width:0;overflow:hidden}
+.gear-doll>.slot-equip{min-width:0;overflow:hidden}
 .slot-equip{
   position:relative;aspect-ratio:1 / 1;border:1px solid #332b22;border-radius:4px;
   background:linear-gradient(180deg,#1b1611,#0e0b09);
@@ -269,7 +270,7 @@ b{color:#f0e2c0;font-weight:600}
 .slot-equip .sockets{position:absolute;left:50%;transform:translateX(-50%);bottom:3px}
 .slot-equip .g{font-size:24px;line-height:1;flex:none;opacity:.9}
 .slot-equip .nm{
-  font-size:10.5px;line-height:1.25;text-align:center;max-width:100%;
+  font-size:10.5px;line-height:1.25;text-align:center;max-width:100%;width:100%;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .mini-stats{font-size:12px;line-height:1.75;color:#b8ab90}
@@ -655,6 +656,27 @@ b{color:#f0e2c0;font-weight:600}
 .flt-toggle{display:flex;align-items:center;gap:5px;color:#d8c79f;cursor:pointer;user-select:none}
 .flt-rules{display:flex;flex-direction:column;gap:7px;max-height:46vh;overflow:auto;padding-right:2px}
 .frule{border:1px solid #332b22;border-radius:5px;padding:7px 9px;background:rgba(0,0,0,.28);font-size:12px}
+.frule.dragging{opacity:.45}
+.frule.drag-over{border-color:var(--gold);box-shadow:0 0 0 1px rgba(200,164,92,.45) inset}
+.frule .fr-idx{cursor:grab}
+/* 词缀勾选面板 */
+.afx-box{width:560px;max-width:92vw}
+.afx-list{
+  max-height:46vh;overflow:auto;margin:8px 0;padding:6px;border:1px solid #332b22;border-radius:4px;
+  background:rgba(0,0,0,.25);
+}
+.afx-group{font-size:11px;color:#c8a45c;margin:6px 2px 4px;letter-spacing:1px}
+.afx-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:3px}
+.afx-item{
+  display:flex;align-items:center;gap:5px;font-size:11.5px;padding:3px 5px;border-radius:3px;
+  border:1px solid transparent;cursor:pointer;
+}
+.afx-item:hover{background:rgba(200,164,92,.10)}
+.afx-item.on{border-color:#4a3c2a;background:rgba(200,164,92,.14)}
+.afx-item .an{color:#e8dcbb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.afx-item .as{color:#8c8272;font-size:10.5px;margin-left:auto;white-space:nowrap}
+.fcond .pick-min{color:#8c8272;font-size:11px}
+.fcond .btn.pick{padding:1px 8px;font-size:11px}
 .frule.hide{border-left:3px solid #a8452f}
 .frule.show{border-left:3px solid #8ce07a}
 .frule .fr-hd{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
@@ -904,3 +926,17 @@ b{color:#f0e2c0;font-weight:600}
   position:absolute;inset:0;z-index:99;background:#150707;color:#ffb3ae;padding:24px;font:12px/1.6 monospace;
   white-space:pre-wrap;overflow:auto;
 }
+
+/* 训练场 DPS 面板（只在训练场显示） */
+#dps-box{
+  position:absolute;left:14px;top:86px;z-index:25;pointer-events:none;
+  min-width:186px;padding:8px 10px;border:1px solid #5a4a30;border-radius:5px;
+  background:linear-gradient(180deg,rgba(16,13,10,.92),rgba(9,7,6,.92));
+  box-shadow:0 6px 20px rgba(0,0,0,.75);font-size:11.5px;
+}
+#dps-box .dp-hd{font-size:11px;letter-spacing:1px;color:#c8a45c;margin-bottom:5px}
+#dps-box .dp-r{display:flex;justify-content:space-between;gap:12px;line-height:1.7;color:#b8ab90}
+#dps-box .dp-r b{color:#ffe9a8;font-family:Consolas,monospace;font-size:12.5px}
+#dps-box .dp-r.dim b{color:#e8dcbb;font-size:11.5px}
+#panel-training .tmode{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left}
+#panel-training .tmode .dim{font-size:11px}

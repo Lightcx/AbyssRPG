@@ -307,9 +307,10 @@
       st.weaponMin = Math.max(1, w.min * bonus);
       st.weaponMax = Math.max(st.weaponMin + 1, w.max * bonus);
       st.attackSpeed = w.aps * st.apsMul;
+      st.weaponAps = w.aps;              // 武器自身攻速（技能伤害按它归一）
       st.weaponKind = w.kind;
     } else {
-      st.weaponMin = 4; st.weaponMax = 9; st.attackSpeed = 1.25 * st.apsMul; st.weaponKind = 'melee';
+      st.weaponMin = 4; st.weaponMax = 9; st.attackSpeed = 1.25 * st.apsMul; st.weaponAps = 1.25; st.weaponKind = 'melee';
     }
     /* 秒伤 = （武器物理均值 + 装备附加的元素伤害折算） × 攻速
      * 附加元素按 attackComponents 里同一套折算：×0.9 再乘元素加成 */
@@ -420,14 +421,19 @@
     const skillMult = (s.base != null ? (s.base + (s.per || 0) * (scaleLv - 1)) / 100 : 1);
     const wm = s.weaponMult == null ? 1 : s.weaponMult;
     const wAvg = (st.weaponMin + st.weaponMax) / 2;
-    const base = wAvg * wm * skillMult * st.dmgMult;
+    /* 技能伤害按「武器秒伤」归一：均伤 × (实际攻速 / 基准攻速)。
+     * 否则慢速高单伤的武器（尤其是双手）会在技能上白赚一份伤害。
+     * 普通攻击不归一 —— 它本来就按攻速一下一下打，单发低、频率高是等价交换。 */
+    const refAps = (G.BALANCE && G.BALANCE.skillRefAps) || 1.16;
+    const apsF = (s.type === 'basic') ? 1 : ((st.attackSpeed || refAps) / refAps);
+    const base = wAvg * apsF * wm * skillMult * st.dmgMult;
     const main = s.elem || 'physical';
     const out = { physical: 0, fire: 0, cold: 0, lightning: 0, poison: 0 };
     out[main] += base * (1 + (st.elemBonus[main] || 0));
-    // 装备附加元素伤害
+    // 装备附加元素伤害（同样按攻速归一）
     for (const k in st.added) {
       const v = st.added[k];
-      if (v > 0) out[k] += v * 0.9 * (1 + (st.elemBonus[k] || 0)) * (0.6 + 0.4 * wm);
+      if (v > 0) out[k] += v * 0.9 * (1 + (st.elemBonus[k] || 0)) * (0.6 + 0.4 * wm) * apsF;
     }
     return out;
   };

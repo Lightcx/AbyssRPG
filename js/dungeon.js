@@ -28,6 +28,55 @@
   DG.worldToTile = (x, y) => [Math.floor(x / DG.TILE), Math.floor(y / DG.TILE)];
   DG.tileCenter = (tx, ty) => ({ x: tx * DG.TILE + DG.TILE / 2, y: ty * DG.TILE + DG.TILE / 2 });
 
+  /* ---------------- 训练场（戈登） ----------------
+   * 一间规整的方形练功房：四周石墙、中间空场，西南角是离开用的传送门。
+   * mode: single（1 个假人）/ multi（3 个）/ boss（1 个 BOSS 假人）
+   */
+  DG.makeTraining = function (rng, opts) {
+    opts = opts || {};
+    const mode = opts.mode === 'multi' ? 'multi' : (opts.mode === 'boss' ? 'boss' : 'single');
+    const w = 30, h = 20;
+    const m = makeGrid(w, h);
+    m.tiles.fill(0);                                   // 0 = 实心墙
+    for (let ty = 1; ty < h - 1; ty++) {
+      for (let tx = 1; tx < w - 1; tx++) m.tiles[ty * w + tx] = 1;
+    }
+    for (let i = 0; i < m.variant.length; i++) m.variant[i] = Math.floor(rng.range(0, 4));
+    const theme = (D.ABYSS_THEMES && D.ABYSS_THEMES[0]) || {};
+    m.theme = theme.id || null;
+    m.isBoss = false;
+    m.training = mode;
+    m.rooms = [{ x: 1, y: 1, w: w - 2, h: h - 2, type: 'training' }];
+    m.corridors = []; m.decor = []; m.wallTiles = []; m.props = []; m.spawns = [];
+    m.stairs = null;
+    // 两侧各摆几盏灯，别让练功房太黑
+    m.torches = [];
+    for (let i = 0; i < 4; i++) {
+      const ty = 3 + i * 4;
+      [2, w - 3].forEach((tx) => {
+        const c = DG.tileCenter(tx, ty);
+        m.torches.push({
+          x: c.x, y: c.y, r: 210, phase: rng.range(0, 6.28),
+          hue: theme.lightHue == null ? 32 : theme.lightHue,
+          kind: theme.light || 'torch', color: theme.lightColor || '#ffb060',
+        });
+      });
+    }
+    const start = DG.tileCenter(4, h - 4);
+    m.playerStart = { x: start.x, y: start.y };
+    const gate = DG.tileCenter(4, h - 6);
+    m.townPortal = { x: gate.x, y: gate.y };
+    const cx = Math.floor(w / 2), cy = Math.floor(h / 2);
+    const spots = mode === 'multi'
+      ? [[cx - 4, cy, 'dummy'], [cx, cy, 'dummy'], [cx + 4, cy, 'dummy']]
+      : (mode === 'boss' ? [[cx, cy, 'dummy_boss']] : [[cx, cy, 'dummy']]);
+    m.dummySpots = spots.map((sp) => {
+      const c = DG.tileCenter(sp[0], sp[1]);
+      return { x: c.x, y: c.y, def: sp[2] };
+    });
+    return m;
+  };
+
   DG.solidAtWorld = function (m, x, y) {
     const tx = Math.floor(x / DG.TILE), ty = Math.floor(y / DG.TILE);
     return solidTile(at(m, tx, ty));

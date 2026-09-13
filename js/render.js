@@ -1388,6 +1388,28 @@
         ctx.globalAlpha = 1;
         break;
       }
+      case 'dummy':
+      case 'dummy_boss': {
+        // 训练假人：木桩 + 十字横臂 + 草靶；BOSS 假人做成恶魔像
+        const big = m.shape === 'dummy_boss';
+        ctx.fillStyle = '#6b4a22';
+        ctx.fillRect(-r * 0.22, -r * 0.1, r * 0.44, r * 1.5);
+        ctx.fillRect(-r * 1.05, -r * 0.35, r * 2.1, r * 0.3);
+        ctx.fillStyle = body;
+        ctx.beginPath(); ctx.ellipse(0, -r * 0.7, r * 0.62, r * 0.78, 0, 0, G.TAU); ctx.fill();
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.beginPath(); ctx.ellipse(0, -r * 0.45, r * 0.5, r * 0.3, 0, 0, G.TAU); ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(-r * 0.45, -r * 0.85); ctx.lineTo(r * 0.45, -r * 0.55); ctx.stroke();
+        if (big) {
+          ctx.fillStyle = '#1c0f14';
+          ctx.beginPath(); ctx.moveTo(-r * 0.5, -r * 1.2); ctx.lineTo(-r * 1.0, -r * 2.0); ctx.lineTo(-r * 0.1, -r * 1.4); ctx.closePath(); ctx.fill();
+          ctx.beginPath(); ctx.moveTo(r * 0.5, -r * 1.2); ctx.lineTo(r * 1.0, -r * 2.0); ctx.lineTo(r * 0.1, -r * 1.4); ctx.closePath(); ctx.fill();
+        }
+        ctx.fillStyle = big ? '#ff7a5c' : '#3a2f22';
+        ctx.beginPath(); ctx.arc(-r * 0.2, -r * 1.3, 2.2, 0, G.TAU); ctx.arc(r * 0.2, -r * 1.3, 2.2, 0, G.TAU); ctx.fill();
+        break;
+      }
       default: { // demon
         ctx.fillStyle = body;
         ctx.beginPath(); ctx.ellipse(0, bob * 0.4, r * 0.95, r * 1.05, 0, 0, G.TAU); ctx.fill();

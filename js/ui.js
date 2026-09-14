@@ -2416,6 +2416,8 @@
     /* 通用确认框的两个按钮 */
     const cok = el('btn-confirm-ok');
     if (cok) cok.addEventListener('click', () => UI.confirmResolve(true));
+    const bio = el('bind-io');
+    if (bio) bio.hidden = true;                 // 自定义按键小窗默认收起
     const cno = el('btn-confirm-cancel');
     if (cno) cno.addEventListener('click', () => UI.confirmResolve(false));
     /* 商人的一键卖出：全部 / 只白装 / 魔法及以下 */
@@ -2488,6 +2490,8 @@
     }
     // 过滤器面板一关，导入 / 导出小窗也跟着关
     if (id === 'panel-filter' && !show) { UI.closeFilterIO(); UI.closeAffixPick(); }
+    // 设置面板一关，自定义按键小窗也跟着关
+    if (id === 'panel-settings' && !show) UI.closeBindIO();
     // 锚点：只有从 NPC / 深渊之门打开的窗口才会因走远而自动关闭
     UI.anchor = show ? (anchor || null) : null;
     if (show) {
@@ -4218,6 +4222,28 @@
     UI.updateHUD();
   };
 
+  /* ---------------- 自定义按键小窗（盖在设置面板上，默认不展开） ---------------- */
+  UI.openBindIO = function () {
+    const box = el('bind-io');
+    if (!box) return false;
+    UI.renderSettings();
+    box.hidden = false;
+    return true;
+  };
+
+  UI.closeBindIO = function () {
+    const box = el('bind-io');
+    if (!box || box.hidden) return false;
+    box.hidden = true;
+    UI.capture = null;
+    return true;
+  };
+
+  UI.bindIOVisible = function () {
+    const box = el('bind-io');
+    return !!box && box.hidden === false;
+  };
+
   /* ============================================================
    *  训练场（戈登）
    * ============================================================ */
@@ -4290,6 +4316,37 @@
         G.audio.play('ui');
       });
     });
+    /* 自定义按键：默认不展开，点按钮才弹出小窗 */
+    const bopen = el('btn-bind-open');
+    if (bopen) bopen.addEventListener('click', () => { UI.openBindIO(); G.audio.play('ui'); });
+    const bclose = el('btn-bind-close');
+    if (bclose) bclose.addEventListener('click', () => UI.closeBindIO());
+    const bwrap = el('bind-io');
+    if (bwrap) bwrap.addEventListener('click', (ev) => { if (ev.target === bwrap) UI.closeBindIO(); });
+    /* 音量滑条：拖动时实时生效，松手才写入设置 */
+    const mv = el('music-vol');
+    if (mv) {
+      mv.addEventListener('input', () => {
+        G.music.setVolume(Number(mv.value));
+        G.text('music-vol-val', Math.round(Number(mv.value)));
+      });
+      mv.addEventListener('change', () => {
+        G.Settings.setMusicVol(Number(mv.value));
+        UI.renderSettings();
+      });
+    }
+    const sv = el('sfx-vol');
+    if (sv) {
+      sv.addEventListener('input', () => {
+        G.audio.setVolume(Number(sv.value));
+        G.text('sfx-vol-val', Math.round(Number(sv.value)));
+        G.audio.play('ui');
+      });
+      sv.addEventListener('change', () => {
+        G.Settings.setSfxVol(Number(sv.value));
+        UI.renderSettings();
+      });
+    }
     UI.bindCapture();
   };
 
@@ -4355,8 +4412,15 @@
     if (desc) desc.textContent = G.Settings.modeDef().desc;
     const lb = el('bind-mode-label');
     if (lb) lb.textContent = '（' + G.Settings.modeDef().name + '模式下生效）';
+    const bio = el('bind-io-mode');
+    if (bio) bio.textContent = '（' + G.Settings.modeDef().name + '模式）';
     const snd = el('btn-sound');
     if (snd) snd.textContent = '音效：' + (G.Settings.data.audio ? '开' : '关');
+    /* 音量滑条 */
+    const mv = el('music-vol');
+    if (mv) { mv.value = G.Settings.musicVol(); G.text('music-vol-val', G.Settings.musicVol()); }
+    const sv = el('sfx-vol');
+    if (sv) { sv.value = G.Settings.sfxVol(); G.text('sfx-vol-val', G.Settings.sfxVol()); }
     G.Settings.SHOWS.forEach((s) => {
       const b = el('btn-' + s.id.toLowerCase());
       if (!b) return;

@@ -406,9 +406,21 @@
         <div id="mode-pick" class="mode-pick"></div>
         <p class="hint" id="mode-desc"></p>
         <h3>按键绑定 <span class="dim small" id="bind-mode-label"></span></h3>
-        <p class="hint">点击按键按钮后按下新按键即可改键；<b>Delete</b> 清除绑定，<b>Esc</b> 放弃修改。同一按键在同模式下只会保留一个动作。</p>
-        <div id="bind-list" class="bind-list"></div>
-        <p class="hint" id="bind-warn" style="color:#ff8f8f"></p>
+        <p class="hint">默认是<b>键盘（WASD）模式</b>；想改键就打开下面的窗口。</p>
+        <div class="settings-foot">
+          <button class="btn" id="btn-bind-open">自定义按键</button>
+        </div>
+        <h3>音量</h3>
+        <div class="vol-row">
+          <span class="vl">背景音乐</span>
+          <input type="range" id="music-vol" min="0" max="100" step="5" value="60">
+          <b id="music-vol-val">60</b>
+        </div>
+        <div class="vol-row">
+          <span class="vl">音效</span>
+          <input type="range" id="sfx-vol" min="0" max="100" step="5" value="80">
+          <b id="sfx-vol-val">80</b>
+        </div>
         <h3>界面显示</h3>
         <p class="hint">控制人物头顶与脚下的状态条；关闭后画面更干净。</p>
         <div class="settings-foot">
@@ -417,8 +429,20 @@
           <button class="btn" id="btn-dodgebar">在人物脚下显示闪避条</button>
         </div>
         <div class="settings-foot">
-          <button class="btn" id="btn-bind-reset">恢复默认按键</button>
           <button class="btn" id="btn-sound">音效：开</button>
+        </div>
+      </div>
+      <!-- 自定义按键：盖在设置面板上的小窗（点按钮才弹出） -->
+      <div class="flt-io" id="bind-io" hidden>
+        <div class="flt-io-box bind-box">
+          <h3>自定义按键 <span class="dim small" id="bind-io-mode"></span></h3>
+          <p class="hint">点击按键按钮后按下新按键即可改键；<b>Delete</b> 清除绑定，<b>Esc</b> 放弃修改。同一按键在同模式下只会保留一个动作。</p>
+          <div id="bind-list" class="bind-list"></div>
+          <p class="hint" id="bind-warn" style="color:#ff8f8f"></p>
+          <div class="flt-foot">
+            <button class="btn" id="btn-bind-reset">恢复默认按键</button>
+            <button class="btn" id="btn-bind-close">关闭</button>
+          </div>
         </div>
       </div>
     </section>

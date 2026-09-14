@@ -107,6 +107,7 @@
   Game.prototype.enterTown = function (opts) {
     opts = opts || {};
     this.area = 'town';
+    G.music.sync('town');
     if (!this.townMap) this.townMap = G.Town.generate(this.rng);
     this.map = this.townMap;
     this.explored = this.exploredTown || (this.exploredTown = new Uint8Array(this.map.w * this.map.h));
@@ -259,6 +260,7 @@
     m.variant = strToU8(m.variant, m.w * m.h);
     m.area = 'dungeon';
     this.area = 'dungeon';
+    G.music.sync('dungeon');
     this.floor = cache.floor;
     this.diffIdx = G.clamp(cache.diffIdx | 0, 0, D.MAX_DIFF);
     this.mlvl = cache.mlvl || G.mlvlOf(this.floor, this.diffIdx);
@@ -331,6 +333,7 @@
     }
     this.floorCache = null;           // 换了层数 → 旧缓存作废
     this.area = 'dungeon';
+    G.music.sync('dungeon');
     this.floor = floor;
     if (this.player) this.player.maxFloor = Math.max(this.player.maxFloor || 1, floor);
     this.mlvl = G.mlvlOf(floor, this.diffIdx);
@@ -457,6 +460,7 @@
     // 正在深渊里直接进练功房的话，先把这一层记下来，回头还能接着打
     if (this.area === 'dungeon' && this.map) this.floorCache = this.serializeFloor();
     this.area = 'training';
+    G.music.sync('training');
     this.trainingMode = md.id;
     const map = G.Dungeon.makeTraining(this.rng, { mode: md.id });
     this.map = map;
@@ -783,6 +787,7 @@
     const dt = Math.min(0.05, Math.max(0.0005, dtRaw));
     this.frame++;
     this.clock = (this.clock || 0) + dt;      // 训练场 DPS 用的累计时间
+    G.music.tick(dt);                         // 被浏览器自动播放策略拦下时在这里重试
     if (!this.started || !this.player) return;
 
     /* 全局按键 */
@@ -795,6 +800,7 @@
       if (G.UI.heldGem) G.UI.releaseGem();
       else if (G.UI.heldOrb) G.UI.releaseOrb();
       else if (G.UI.closeConfirm()) { /* 先关掉确认框：底下的铁匠铺 / 商人界面留着 */ }
+      else if (G.UI.closeBindIO()) { /* 自定义按键小窗 */ }
       else if (G.UI.closeAffixPick()) { /* 词缀勾选面板同理 */ }
       else if (G.UI.closeFilterIO()) { /* 先关掉过滤器面板里的导入 / 导出小窗 */ }
       else if (G.UI.open) G.UI.togglePanel(G.UI.open, false);

@@ -926,7 +926,23 @@ b{color:#f0e2c0;font-weight:600}
 .bind-row.capturing{background:rgba(200,164,92,.14);box-shadow:0 0 0 1px var(--gold) inset}
 .bind-row.capturing .bkey{color:#fff;animation:bindpulse 1s infinite}
 @keyframes bindpulse{0%,100%{opacity:1}50%{opacity:.45}}
-.settings-foot{display:flex;gap:10px;margin-top:10px}
+.settings-foot{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
+/* 音量滑条 */
+.vol-row{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:12px;color:#d8c79f}
+.vol-row .vl{width:64px;flex:none}
+.vol-row input[type=range]{
+  flex:1;min-width:0;height:18px;background:transparent;-webkit-appearance:none;appearance:none;cursor:pointer;
+}
+.vol-row input[type=range]::-webkit-slider-runnable-track{height:5px;border-radius:3px;background:#2a2118}
+.vol-row input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;width:14px;height:14px;margin-top:-4.5px;border-radius:50%;
+  background:linear-gradient(180deg,#e8cf94,#a8894c);border:1px solid #4a3c2a;
+}
+.vol-row input[type=range]::-moz-range-track{height:5px;border-radius:3px;background:#2a2118}
+.vol-row input[type=range]::-moz-range-thumb{width:13px;height:13px;border-radius:50%;background:#e8cf94;border:1px solid #4a3c2a}
+.vol-row b{width:34px;text-align:right;color:#ffe9a8;font-family:Consolas,monospace}
+.bind-box{width:560px;max-width:92vw}
+.bind-box .bind-list{max-height:52vh;overflow:auto}
 
 #fatal{
   position:absolute;inset:0;z-index:99;background:#150707;color:#ffb3ae;padding:24px;font:12px/1.6 monospace;

@@ -206,7 +206,13 @@
       } catch (e) { this.enabled = false; }
     },
     resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); },
-    setEnabled(v) { this.enabled = !!v; if (this.master) this.master.gain.value = this.enabled ? 0.22 : 0; },
+    volume: 0.8,                       // 音效音量（0~1，来自设置）
+    baseGain: 0.22,
+    applyGain() {
+      if (this.master) this.master.gain.value = this.enabled ? this.baseGain * this.volume : 0;
+    },
+    setVolume(v) { this.volume = Math.max(0, Math.min(1, (Number(v) || 0) / 100)); this.applyGain(); },
+    setEnabled(v) { this.enabled = !!v; this.applyGain(); },
     _tone(freq, dur, type, vol, slideTo, delay) {
       if (!this.enabled || !this.ready) return;
       const t0 = this.ctx.currentTime + (delay || 0);
@@ -268,6 +274,86 @@
     },
   };
   G.audio = Audio;
+
+  /* ---------------- 背景音乐 ----------------
+   * 用 <audio> 元素播放（file:// 直接打开也能用，WebAudio 解码反而不行）。
+   * 曲目按区域切换：深渊 = 紧张曲，营地 / 训练场 = 平静曲。
+   * 放不出来（浏览器自动播放限制）时会在下一次交互后自动重试（见 Music.tick）。
+   */
+  const MUSIC_DIR = 'assets/music/';
+  const MUSIC_TRACKS = {
+    abyss: MUSIC_DIR + 'leberch-suspense-586318.mp3',    // 深渊
+    camp: MUSIC_DIR + 'leberch-melancholy-595794.mp3',   // 余烬营地 / 训练场
+  };
+  const Music = {
+    tracks: MUSIC_TRACKS,
+    el: null,
+    current: null,
+    volume: 0.6,
+    enabled: true,
+    _retryT: 0,
+    trackFor(area) { return (area === 'town' || area === 'training') ? 'camp' : 'abyss'; },
+    ensure() {
+      if (this.el) return this.el;
+      if (G.HEADLESS) return null;
+      const A = root.Audio;
+      if (!A) return null;
+      try {
+        this.el = new A();
+        this.el.loop = true;
+        this.el.preload = 'auto';
+        this.el.volume = this.volume;
+      } catch (e) { this.el = null; }
+      return this.el;
+    },
+    setVolume(v) {
+      this.volume = Math.max(0, Math.min(1, (Number(v) || 0) / 100));
+      if (this.el) this.el.volume = this.enabled ? this.volume : 0;
+    },
+    setEnabled(on) {
+      this.enabled = !!on;
+      if (!this.el) return;
+      this.el.volume = this.enabled ? this.volume : 0;
+      if (!this.enabled) { try { this.el.pause(); } catch (e) { } }
+      else if (this.current) this._start();
+    },
+    _start() {
+      const el = this.el;
+      if (!el || !this.current) return;
+      el.volume = this.enabled ? this.volume : 0;
+      const pr = el.play ? el.play() : null;
+      // 还没跟页面交互过时 play() 会被拒绝，这是正常的，Music.tick 会重试
+      if (pr && pr.catch) pr.catch(() => { });
+    },
+    play(name) {
+      const src = MUSIC_TRACKS[name];
+      if (!src) return false;
+      if (this.current === name && this.el && !this.el.paused) return true;
+      this.current = name;
+      const el = this.ensure();
+      if (!el) return false;
+      if (el.src !== src && el.src.indexOf(src) < 0) el.src = src;
+      this._start();
+      return true;
+    },
+    stop() {
+      this.current = null;
+      if (this.el) { try { this.el.pause(); } catch (e) { } }
+    },
+    /* 跟着区域切曲 */
+    sync(area) { return this.play(this.trackFor(area)); },
+    /* 每帧兜底：被自动播放策略拦下时，等下一次交互（点击 / 按键）再试 */
+    tick(dt) {
+      if (!this.enabled || !this.current || !this.el) return;
+      if (!this.el.paused) return;
+      this._retryT -= (dt || 0.016);
+      if (this._retryT > 0) return;
+      this._retryT = 1.5;
+      this._start();
+    },
+  };
+  G.music = Music;
+
 
   /* ---------------- 存档（多存档位） ---------------- */
   const KEY_LEGACY = 'shadow-abyss-save-v1';
@@ -415,9 +501,12 @@
     },
     defaults() {
       return {
-        mode: 'mouse', audio: true, binds: defaultBinds(),
+        // 新玩家默认用键盘（WASD）操作
+        mode: 'wasd', audio: true, binds: defaultBinds(),
         // 界面显示：头顶血条 / 头顶蓝条 / 脚下闪避条
         hpBar: true, manaBar: true, dodgeBar: true,
+        // 音量（0~100）：背景音乐 / 音效
+        musicVol: 60, sfxVol: 80,
       };
     },
     load() {
@@ -428,6 +517,11 @@
         const saved = JSON.parse(raw);
         if (saved && (saved.mode === 'mouse' || saved.mode === 'wasd')) d.mode = saved.mode;
         if (saved && typeof saved.audio === 'boolean') d.audio = saved.audio;
+        ['musicVol', 'sfxVol'].forEach((k) => {
+          if (saved && typeof saved[k] === 'number' && isFinite(saved[k])) {
+            d[k] = Math.max(0, Math.min(100, Math.round(saved[k])));
+          }
+        });
         SHOW_FLAGS.forEach((k) => {
           if (saved && typeof saved[k] === 'boolean') d[k] = saved[k];
         });
@@ -454,14 +548,30 @@
       const audio = Settings.data ? Settings.data.audio : true;
       const shows = {};
       SHOW_FLAGS.forEach((k) => { shows[k] = Settings.show(k); });
+      const vols = { musicVol: Settings.musicVol(), sfxVol: Settings.sfxVol() };
       Settings.data = Settings.defaults();
       Settings.data.mode = mode;
       Settings.data.audio = audio;
       SHOW_FLAGS.forEach((k) => { Settings.data[k] = shows[k]; });
+      Settings.data.musicVol = vols.musicVol;
+      Settings.data.sfxVol = vols.sfxVol;
       Settings.save();
       return Settings.data;
     },
     mode() { return Settings.data ? Settings.data.mode : 'mouse'; },
+    /* 音量（0~100）：音乐 / 音效 */
+    musicVol() { return (Settings.data && Settings.data.musicVol != null) ? Settings.data.musicVol : 60; },
+    sfxVol() { return (Settings.data && Settings.data.sfxVol != null) ? Settings.data.sfxVol : 80; },
+    setMusicVol(v) {
+      Settings.data.musicVol = Math.max(0, Math.min(100, Math.round(v) || 0));
+      Settings.save();
+      return Settings.data.musicVol;
+    },
+    setSfxVol(v) {
+      Settings.data.sfxVol = Math.max(0, Math.min(100, Math.round(v) || 0));
+      Settings.save();
+      return Settings.data.sfxVol;
+    },
     SHOWS: SHOW_DEFS,
     // 显示开关：没存过 → 默认开
     show(key) { return Settings.data ? Settings.data[key] !== false : true; },
@@ -535,7 +645,11 @@
   };
   G.Settings = Settings;
   Settings.init();
-  if (G.audio && Settings.data) G.audio.enabled = !!Settings.data.audio;
+  if (G.audio && Settings.data) {
+    G.audio.enabled = !!Settings.data.audio;
+    G.audio.setVolume(Settings.sfxVol());
+  }
+  G.music.setVolume(Settings.musicVol());
 
   /* ---------------- 共享仓库：通货石与宝石（跨存档位共用） ----------------
    * 与角色存档分开存储，删除某个存档位不会影响这里；每种最多堆叠 MAX 个。

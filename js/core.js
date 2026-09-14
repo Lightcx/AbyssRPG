@@ -7,7 +7,7 @@
   'use strict';
   const G = (root.G = root.G || {});
   /* 版本号：与根目录 CHANGELOG.md 顶部的版本行（vX.Y.Z）保持一致（tools/smoke.js 会校验） */
-  G.VERSION = '0.3.0';
+  G.VERSION = '0.4.0';
   G.VERSION_TAG = 'v' + G.VERSION;
   G.HEADLESS = !!root.__HEADLESS__;
 

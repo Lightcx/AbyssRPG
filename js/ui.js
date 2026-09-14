@@ -766,6 +766,31 @@
     // 点小窗外的灰底也能关掉
     const iowrap = el('filter-io');
     if (iowrap) iowrap.addEventListener('click', (ev) => { if (ev.target === iowrap) UI.closeFilterIO(); });
+    /* ---- 过滤器库：下拉切换 / 新建 / 重命名 / 删除 ---- */
+    const pick = el('flt-pick');
+    if (pick) pick.addEventListener('change', () => {
+      const one = G.Filter.setActive(pick.value);
+      UI.refreshFilterViews();
+      UI.renderFilter();
+      if (one) UI.filterMsg('已切换到「' + one.name + '」。');
+    });
+    const fNew = el('btn-flt-new');
+    if (fNew) fNew.addEventListener('click', () => UI.openFilterName('new'));
+    const fRen = el('btn-flt-rename');
+    if (fRen) fRen.addEventListener('click', () => UI.openFilterName('rename'));
+    const fDel = el('btn-flt-del');
+    if (fDel) fDel.addEventListener('click', () => UI.deleteActiveFilter());
+    const nOk = el('btn-flt-name-ok');
+    if (nOk) nOk.addEventListener('click', () => UI.confirmFilterName());
+    const nNo = el('btn-flt-name-cancel');
+    if (nNo) nNo.addEventListener('click', () => UI.closeFilterName());
+    const nWrap = el('flt-name-io');
+    if (nWrap) nWrap.addEventListener('click', (ev) => { if (ev.target === nWrap) UI.closeFilterName(); });
+    const nIn = el('flt-name-input');
+    if (nIn) nIn.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') UI.confirmFilterName();
+      else if (ev.key === 'Escape') UI.closeFilterName();
+    });
     /* ---- 词缀勾选面板 ---- */
     const hideC = el('affix-hide-conflict');
     if (hideC) hideC.addEventListener('change', () => {
@@ -817,8 +842,8 @@
     const imp = UI.filterIOMode === 'import';
     G.text('filter-io-title', imp ? '导入过滤器' : '导出过滤器');
     G.text('filter-io-hint', imp
-      ? '把过滤器文本粘贴到下面的框里，再点「导入」——会覆盖当前的启用状态与全部规则。'
-      : '下面就是当前过滤器的文本，点「复制」拿走备份即可。');
+      ? '把过滤器文本粘贴到下面的框里，再点「导入」——它会作为新的过滤器加进列表并选中，不会覆盖现有的。'
+      : '下面就是当前过滤器「' + G.Filter.data.name + '」的文本，点「复制」拿走备份即可。');
     ta.value = imp ? '' : G.Filter.exportText();
     ta.placeholder = imp ? '在这里粘贴过滤器文本（Ctrl + V）' : '';
     const ok = el('btn-filter-io-ok');
@@ -836,6 +861,108 @@
     UI.filterIOMode = null;
     UI.filterMsg('');
     return true;
+  };
+
+  /* ---------------- 过滤器库：下拉列表 + 新建 / 重命名 ---------------- */
+  UI.filterNameMode = 'new';
+
+  /* 下拉列表：所有存档共用这一批过滤器，选中的那个就是当前生效的 */
+  UI.renderFilterBar = function () {
+    const F = G.Filter;
+    if (!F || !F.list) return;
+    const sel = el('flt-pick');
+    if (sel) {
+      sel.innerHTML = F.list.map((f) =>
+        '<option value="' + f.id + '"' + (f.id === F.activeId ? ' selected' : '') + '>' +
+        f.name + '（' + f.rules.length + ' 条）</option>').join('');
+      sel.value = F.activeId;
+    }
+    const del = el('btn-flt-del');
+    if (del) {
+      del.disabled = F.list.length <= 1;
+      del.title = F.list.length <= 1 ? '至少要留一个过滤器' : '删除当前过滤器';
+    }
+    G.text('flt-tip', '共 ' + F.list.length + ' / ' + F.MAX_FILTERS + ' 个　所有存档共用');
+  };
+
+  UI.filterNameMsg = function (txt, bad) {
+    const m = el('flt-name-msg');
+    if (m) {
+      m.textContent = txt || '';
+      m.style.color = bad ? '#ff8f8f' : '#8ce07a';
+    }
+  };
+
+  UI.openFilterName = function (mode) {
+    const box = el('flt-name-io'), input = el('flt-name-input');
+    if (!box || !input) return;
+    const ren = mode === 'rename';
+    UI.filterNameMode = ren ? 'rename' : 'new';
+    G.text('flt-name-title', ren ? '重命名过滤器' : '新建过滤器');
+    G.text('flt-name-hint', ren
+      ? '改个名字方便在下拉列表里区分（最多 ' + G.Filter.NAME_MAX + ' 个字）。'
+      : '新过滤器一开始是空的，可以按自己的打法单独写一套规则；所有存档共用同一批过滤器。');
+    input.value = ren ? G.Filter.data.name : '';
+    input.placeholder = ren ? G.Filter.data.name : ('过滤器 ' + (G.Filter.list.length + 1));
+    UI.filterNameMsg('');
+    box.hidden = false;
+    if (input.focus) input.focus();
+    if (ren && input.select) input.select();
+  };
+
+  UI.closeFilterName = function () {
+    const box = el('flt-name-io');
+    if (!box || box.hidden) return false;
+    box.hidden = true;
+    UI.filterNameMsg('');
+    return true;
+  };
+
+  UI.confirmFilterName = function () {
+    const F = G.Filter;
+    const input = el('flt-name-input');
+    const raw = String((input && input.value) || '').trim();
+    if (!raw) {
+      UI.filterNameMsg('名字不能是空的。', true);
+      return false;
+    }
+    if (UI.filterNameMode === 'rename') {
+      const got = F.renameFilter(raw);
+      UI.closeFilterName();
+      UI.renderFilter();
+      UI.filterMsg('已重命名为「' + got + '」。');
+      return true;
+    }
+    if (F.list.length >= F.MAX_FILTERS) {
+      UI.filterNameMsg('最多只能保存 ' + F.MAX_FILTERS + ' 个过滤器。', true);
+      return false;
+    }
+    const one = F.addFilter(raw);
+    UI.closeFilterName();
+    UI.refreshFilterViews();
+    UI.renderFilter();
+    UI.filterMsg('已新建「' + one.name + '」，规则是空的。');
+    return true;
+  };
+
+  UI.deleteActiveFilter = function () {
+    const F = G.Filter;
+    if (F.list.length <= 1) {
+      UI.filterMsg('至少要留一个过滤器。', true);
+      return;
+    }
+    const cur = F.data;
+    UI.askConfirm({
+      title: '删除过滤器',
+      text: '确定删除过滤器「' + cur.name + '」（' + cur.rules.length + ' 条规则）吗？删掉就找不回来了。',
+      okText: '删除',
+      onOk: () => {
+        F.removeFilter(cur.id);
+        UI.refreshFilterViews();
+        UI.renderFilter();
+        UI.filterMsg('已删除过滤器「' + cur.name + '」。');
+      },
+    });
   };
 
   /* ---------------- 词缀勾选面板（盖在过滤器面板上） ---------------- */
@@ -944,7 +1071,7 @@
       UI.refreshFilterViews();
       UI.renderFilter();
       UI.closeFilterIO();
-      UI.filterMsg('导入成功，共 ' + r.rules + ' 条规则。');
+      UI.filterMsg('已导入为新过滤器「' + r.name + '」，共 ' + r.rules + ' 条规则。');
       return true;
     }
     try {
@@ -1026,6 +1153,7 @@
   UI.renderFilter = function () {
     const F = G.Filter;
     if (!F) return;
+    UI.renderFilterBar();
     const en = el('filter-enabled');
     if (en) en.checked = !!F.data.enabled;
     G.text('filter-count', F.data.rules.length + ' / ' + F.MAX_RULES + ' 条规则');
@@ -2489,7 +2617,7 @@
       if (id === 'panel-confirm') UI._confirmCb = null;   // 万一有人直接 toggle 它
     }
     // 过滤器面板一关，导入 / 导出小窗也跟着关
-    if (id === 'panel-filter' && !show) { UI.closeFilterIO(); UI.closeAffixPick(); }
+    if (id === 'panel-filter' && !show) { UI.closeFilterIO(); UI.closeAffixPick(); UI.closeFilterName(); }
     // 设置面板一关，自定义按键小窗也跟着关
     if (id === 'panel-settings' && !show) UI.closeBindIO();
     // 锚点：只有从 NPC / 深渊之门打开的窗口才会因走远而自动关闭
@@ -2741,6 +2869,7 @@
         G.audio.init();
         G.audio.play('portal');
         game.startClass(c.id, slot);
+        G.Filter.onNewCharacter();     // 新存档默认从一个空过滤器开始
         UI.hideStart();
       });
       row.appendChild(card);

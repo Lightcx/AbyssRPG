@@ -15,8 +15,11 @@
   const D = G.DATA;
   const F = (G.Filter = {});
 
-  F.KEY = 'shadow-abyss-filter-v1';
+  F.KEY = 'shadow-abyss-filters-v1';          // 过滤器库（存在本地，跨存档共通）
+  F.LEGACY_KEY = 'shadow-abyss-filter-v1';    // 旧版「只有一个过滤器」的数据，读到时自动迁移
   F.MAX_RULES = 20;
+  F.MAX_FILTERS = 12;                          // 最多同时保存几个过滤器
+  F.NAME_MAX = 16;                             // 过滤器名字最长几个字
 
   F.ACTIONS = [
     { id: 'normal', name: '显示' },
@@ -246,35 +249,139 @@
     return list;
   };
 
-  F.data = { enabled: true, name: '默认过滤器', rules: [], hideConflict: true };
+  /* ---------------- 过滤器库（跨存档共通） ----------------
+   *  · 整批过滤器存在本地（localStorage），不属于任何存档：所有角色共用同一批
+   *  · F.data 永远指向「当前选中的那一个」，界面里改的就是它（改规则 = 改这个对象）
+   *  · 新开存档时会切到一个空过滤器（见 F.onNewCharacter） */
+  let uidSeq = 0;
+  F.newId = function () { uidSeq++; return 'f' + uidSeq + '-' + (Date.now() % 1000000).toString(36); };
+
+  F.cleanName = function (s) {
+    const n = String(s == null ? '' : s).replace(/[\r\n\t]/g, ' ').trim().slice(0, F.NAME_MAX);
+    return n || '过滤器';
+  };
+
+  /* 名字重了就在后面加个序号，方便在下拉列表里区分 */
+  F.uniqueName = function (name, skipId) {
+    const base = F.cleanName(name).slice(0, F.NAME_MAX - 3);
+    let n = F.cleanName(name), i = 2;
+    const taken = (x) => F.list.some((f) => f.id !== skipId && f.name === x);
+    while (taken(n)) { n = F.cleanName(base + ' ' + i); i++; }
+    return n;
+  };
+
+  /* 把一个过滤器对象规整成内部格式（顺带兼容老数据 / 手写 JSON） */
+  F.normFilter = function (d, fallbackName) {
+    d = d && typeof d === 'object' ? d : {};
+    return {
+      id: d.id ? String(d.id) : F.newId(),
+      name: F.cleanName(d.name || fallbackName || '过滤器'),
+      enabled: d.enabled !== false,
+      hideConflict: d.hideConflict !== false,
+      // 老数据里的细则名（需求力量 / 敏捷 / 智力、名称包含、文本框写的词缀）在这里顺手转换 / 丢弃
+      rules: (Array.isArray(d.rules) ? d.rules : []).slice(0, F.MAX_RULES).map((r) => ({
+        action: F.ACTIONS.some((a) => a.id === r.action) ? r.action : 'hide',
+        enabled: r.enabled !== false,
+        conds: F.migrateConds(r.conds),
+      })),
+    };
+  };
+
+  F.blankFilter = function (name) {
+    const one = F.normFilter({ name: name }, '过滤器');
+    one.rules = [];
+    return one;
+  };
+
+  F.list = [];
+  F.activeId = '';
+  F.data = null;
 
   /* ---------------- 存取 ---------------- */
   F.load = function () {
+    let list = [], activeId = '';
     try {
       const raw = root.localStorage && root.localStorage.getItem(F.KEY);
       if (raw) {
         const d = JSON.parse(raw);
-        if (d && Array.isArray(d.rules)) {
-          F.data = {
-            enabled: d.enabled !== false,
-            name: d.name || '默认过滤器',
-            hideConflict: d.hideConflict !== false,
-            // 老存档里的细则名（需求力量 / 敏捷 / 智力、名称包含、文本框写的词缀）在这里顺手转换 / 丢弃
-            rules: d.rules.slice(0, F.MAX_RULES).map((r) => ({
-              action: F.ACTIONS.some((a) => a.id === r.action) ? r.action : 'hide',
-              enabled: r.enabled !== false,
-              conds: F.migrateConds(r.conds),
-            })),
-          };
+        if (d && Array.isArray(d.list) && d.list.length) {
+          list = d.list.slice(0, F.MAX_FILTERS).map((x) => F.normFilter(x));
+          activeId = d.activeId ? String(d.activeId) : '';
         }
       }
-    } catch (e) { /* 坏数据就用默认 */ }
+      if (!list.length) {
+        /* 第一次跑新版：把旧版的单个过滤器搬进来当第一个；没有旧数据就建一个空的 */
+        let legacy = null;
+        const old = root.localStorage && root.localStorage.getItem(F.LEGACY_KEY);
+        if (old) { try { legacy = JSON.parse(old); } catch (e) { legacy = null; } }
+        const one = legacy && typeof legacy === 'object'
+          ? F.normFilter(legacy, '默认过滤器')
+          : F.blankFilter('过滤器 1');
+        list = [one];
+        activeId = one.id;
+      }
+    } catch (e) { /* 坏数据就当没有 */ }
+    if (!list.length) list = [F.blankFilter('过滤器 1')];
+    F.list = list;
+    F.setActive(activeId, true);
     return F.data;
   };
+
   F.save = function () {
     try {
-      if (root.localStorage) root.localStorage.setItem(F.KEY, JSON.stringify(F.data));
+      if (root.localStorage) {
+        root.localStorage.setItem(F.KEY, JSON.stringify({ v: 2, activeId: F.activeId, list: F.list }));
+      }
     } catch (e) { }
+  };
+
+  /* ---------------- 库操作 ---------------- */
+  F.byId = function (id) { return F.list.filter((x) => x.id === id)[0] || null; };
+
+  /* 切换当前过滤器：F.data 指向它，界面里改的就是它 */
+  F.setActive = function (id, silent) {
+    const one = F.byId(id) || F.list[0] || null;
+    if (!one) return null;
+    F.activeId = one.id;
+    F.data = one;
+    if (!silent) F.save();
+    return one;
+  };
+
+  F.addFilter = function (name) {
+    if (F.list.length >= F.MAX_FILTERS) return null;
+    const one = F.blankFilter(name || ('过滤器 ' + (F.list.length + 1)));
+    one.name = F.uniqueName(one.name);
+    F.list.push(one);
+    F.setActive(one.id);
+    return one;
+  };
+
+  F.renameFilter = function (name, id) {
+    const one = F.byId(id || F.activeId);
+    if (!one) return null;
+    one.name = F.uniqueName(name, one.id);
+    F.save();
+    return one.name;
+  };
+
+  F.removeFilter = function (id) {
+    if (F.list.length <= 1) return false;         // 至少留一个，界面永远不会空
+    let i = -1;
+    F.list.forEach((x, k) => { if (x.id === id && i < 0) i = k; });
+    if (i < 0) return false;
+    const wasActive = F.list[i].id === F.activeId;
+    F.list.splice(i, 1);
+    if (wasActive) F.setActive(F.list[0].id); else F.save();
+    return true;
+  };
+
+  /* 新开一个存档：默认给一个空过滤器（已经有一个空的就直接切过去，不重复建） */
+  F.onNewCharacter = function () {
+    if (!F.data.rules.length) return F.data;
+    const empty = F.list.filter((x) => !x.rules.length)[0];
+    if (empty) return F.setActive(empty.id);
+    return F.addFilter('空过滤器');
   };
 
   F.newRule = function (action) {
@@ -314,24 +421,22 @@
   F.clear = function () { F.data.rules = []; };
 
   /* ---------------- 导入 / 导出 ---------------- */
-  F.exportText = function () { return JSON.stringify(F.data, null, 2); };
+  /* 导出当前过滤器（带上名字，方便对方知道是哪一套） */
+  F.exportText = function () {
+    return JSON.stringify({ enabled: F.data.enabled, name: F.data.name, hideConflict: F.data.hideConflict, rules: F.data.rules }, null, 2);
+  };
+  /* 导入：不做覆盖，而是作为库里的一个新过滤器加进来并选中 */
   F.importText = function (txt) {
     try {
       const d = JSON.parse(txt);
       if (!d || !Array.isArray(d.rules)) return { ok: false, why: '不是合法的过滤器数据' };
       if (d.rules.length > F.MAX_RULES) return { ok: false, why: '规则数量超过 ' + F.MAX_RULES + ' 条' };
-      F.data = {
-        enabled: d.enabled !== false,
-        name: d.name || '导入的过滤器',
-        hideConflict: d.hideConflict !== false,
-        rules: d.rules.map((r) => ({
-          action: F.ACTIONS.some((a) => a.id === r.action) ? r.action : 'hide',
-          enabled: r.enabled !== false,
-          conds: F.migrateConds(r.conds),
-        })),
-      };
-      F.save();
-      return { ok: true, rules: F.data.rules.length };
+      if (F.list.length >= F.MAX_FILTERS) return { ok: false, why: '最多只能保存 ' + F.MAX_FILTERS + ' 个过滤器，先删掉一个再导入' };
+      const one = F.normFilter(d, '导入的过滤器');
+      one.name = F.uniqueName(d.name || '导入的过滤器');
+      F.list.push(one);
+      F.setActive(one.id);
+      return { ok: true, rules: one.rules.length, name: one.name };
     } catch (e) {
       return { ok: false, why: '解析失败：' + e.message };
     }

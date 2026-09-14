@@ -199,6 +199,15 @@
     <section class="panel" id="panel-filter" hidden>
       <header><h2>装备过滤器</h2><button class="close" data-close="panel-filter">✕</button></header>
       <div class="pbody filter-body">
+        <!-- 过滤器库：所有存档共用同一批过滤器，这里选当前要用的那一个 -->
+        <div class="flt-bar">
+          <span class="dim small">过滤器</span>
+          <select id="flt-pick" class="flt-pick" title="选择当前使用 / 编辑的过滤器"></select>
+          <button class="btn tiny" id="btn-flt-new">新建</button>
+          <button class="btn tiny" id="btn-flt-rename">重命名</button>
+          <button class="btn tiny danger" id="btn-flt-del">删除</button>
+          <span class="dim small" id="flt-tip"></span>
+        </div>
         <div class="flt-head">
           <label class="flt-toggle"><input type="checkbox" id="filter-enabled"> 启用过滤器</label>
           <span class="dim small">最多 20 条规则，<b>靠前的规则优先生效</b>；一条规则内的所有细则需同时满足</span>
@@ -209,7 +218,7 @@
           <button class="btn" id="btn-filter-add">+ 新增规则</button>
           <button class="btn danger" id="btn-filter-clear">清空全部规则</button>
         </div>
-        <h3>导入 / 导出 <span class="dim small">点按钮才会弹出文本框：导出拿去备份，导入粘贴别人的文本</span></h3>
+        <h3>导入 / 导出 <span class="dim small">点按钮才会弹出文本框：导出拿去备份，导入会作为新的过滤器加进列表</span></h3>
         <div class="flt-foot">
           <button class="btn" id="btn-filter-export">导出过滤器</button>
           <button class="btn" id="btn-filter-import">导入过滤器</button>
@@ -228,6 +237,19 @@
             <button class="btn" id="btn-filter-io-ok">复制</button>
             <button class="btn" id="btn-filter-io-close">关闭</button>
             <span class="dim small" id="filter-io-msg"></span>
+          </div>
+        </div>
+      </div>
+      <!-- 新建 / 重命名过滤器：盖在过滤器面板上的小窗 -->
+      <div class="flt-io" id="flt-name-io" hidden>
+        <div class="flt-io-box name-box">
+          <h3 id="flt-name-title">新建过滤器</h3>
+          <p class="hint dim" id="flt-name-hint"></p>
+          <input type="text" id="flt-name-input" class="flt-name-input" maxlength="16" spellcheck="false" autocomplete="off">
+          <div class="flt-foot">
+            <button class="btn" id="btn-flt-name-ok">确定</button>
+            <button class="btn" id="btn-flt-name-cancel">取消</button>
+            <span class="dim small" id="flt-name-msg"></span>
           </div>
         </div>
       </div>

@@ -641,6 +641,17 @@ b{color:#f0e2c0;font-weight:600}
 #panel-filter{left:50%;top:50%;transform:translate(-50%,-50%);width:780px;max-width:96vw}
 .filter-body{text-align:left}
 .flt-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:12px;margin-bottom:10px}
+/* 过滤器库：下拉选择 + 新建 / 重命名 / 删除 */
+.flt-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-size:12px}
+.flt-pick{
+  min-width:180px;max-width:290px;background:#120e0b;border:1px solid #3a3126;border-radius:4px;
+  color:#f0e2c0;font-size:12px;padding:3px 6px;cursor:pointer;
+}
+.flt-name-input{
+  width:100%;background:#120e0b;border:1px solid #3a3126;border-radius:4px;color:#f0e2c0;
+  font-size:13px;padding:6px 8px;letter-spacing:1px;
+}
+.flt-io-box.name-box{max-width:420px}
 .flt-toggle{display:flex;align-items:center;gap:5px;color:#d8c79f;cursor:pointer;user-select:none}
 .flt-rules{display:flex;flex-direction:column;gap:7px;max-height:46vh;overflow:auto;padding-right:2px}
 .frule{border:1px solid #332b22;border-radius:5px;padding:7px 9px;background:rgba(0,0,0,.28);font-size:12px}

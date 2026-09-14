@@ -929,10 +929,27 @@ b{color:#f0e2c0;font-weight:600}
 /* 存档位列表：20 个也要能滚（起始界面不撑高） */
 #slot-list{
   max-height:56vh;overflow-y:auto;overflow-x:hidden;
-  display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:9px;padding-right:4px;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;padding-right:4px;
 }
+/* 卡片宽度交给网格轨道，别再写死 250px（否则会压到隔壁列上） */
+#slot-list .slot-card{width:auto;min-width:0}
 #slot-list::-webkit-scrollbar{width:9px}
 #slot-list::-webkit-scrollbar-thumb{background:#3a2f22;border-radius:4px}
+
+/* 职业选择：盖在起始界面上的弹窗（存档列表留在后面） */
+#class-pick{
+  position:absolute;inset:0;z-index:40;background:rgba(4,3,2,.78);
+  display:flex;align-items:center;justify-content:center;padding:24px;
+}
+#class-pick[hidden]{display:none}
+#class-pick .pick-box{
+  max-width:96vw;max-height:92vh;overflow:auto;padding:16px 18px;border:1px solid #4a3c2a;border-radius:6px;
+  background:linear-gradient(180deg,#231d17,#120e0b);box-shadow:0 18px 50px rgba(0,0,0,.85);
+}
+#class-pick .pick-hd{font-size:14px;letter-spacing:2px;color:#c8a45c;margin-bottom:12px;text-align:center}
+#class-pick .pick-hd b{color:#ffe9a8}
+#class-pick .pick-cards{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+#class-pick .pick-foot{display:flex;justify-content:center;margin-top:14px}
 
 .settings-foot{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
 /* 音量滑条 */

@@ -2452,7 +2452,7 @@
       UI.buildStart(UI.game);
     });
     const bback = el('btn-back-slots');
-    if (bback) bback.addEventListener('click', () => UI.buildStart(UI.game));
+    if (bback) bback.addEventListener('click', () => { UI.closePickClass(); UI.buildStart(UI.game); });
     const breset = el('btn-reset');
     if (breset) breset.addEventListener('click', () => {
       const slot = UI.game.slot | 0;
@@ -2702,8 +2702,7 @@
 
   UI.pickClassFor = function (slot, game) {
     UI.startSlot = slot;
-    const slots = el('slot-list');
-    if (slots) slots.hidden = true;
+    /* 职业选择改成弹出的小窗：存档列表继续留在后面，按钮可以取消 */
     const back = el('btn-back-slots');
     if (back) back.hidden = false;
     const hint = el('ss-hint');
@@ -2712,6 +2711,14 @@
     if (!box) return;
     box.hidden = false;
     box.innerHTML = '';
+    const wrap = root.document.createElement('div');
+    wrap.className = 'pick-box';
+    const head = root.document.createElement('div');
+    head.className = 'pick-hd';
+    head.innerHTML = '<b>存档位 ' + (slot + 1) + '</b>　选择职业';
+    wrap.appendChild(head);
+    const row = root.document.createElement('div');
+    row.className = 'pick-cards';
     D.CLASSES.forEach((c) => {
       const card = root.document.createElement('div');
       card.className = 'class-card';
@@ -2726,14 +2733,36 @@
         game.startClass(c.id, slot);
         UI.hideStart();
       });
-      box.appendChild(card);
+      row.appendChild(card);
     });
+    wrap.appendChild(row);
+    const foot = root.document.createElement('div');
+    foot.className = 'pick-foot';
+    foot.innerHTML = '<button class="btn" id="btn-pick-cancel">取消</button>';
+    wrap.appendChild(foot);
+    box.appendChild(wrap);
+    const cancel = el('btn-pick-cancel');
+    if (cancel) cancel.addEventListener('click', () => UI.closePickClass());
   };
 
   UI.loadSlot = function (slot, game) {
     G.audio.init();
     if (game.load(slot)) UI.hideStart();
     else G.log('存档位 ' + (slot + 1) + ' 读取失败。', 'c-boss');
+  };
+
+  /* 关掉职业选择小窗（回到存档列表） */
+  UI.closePickClass = function () {
+    const box = el('class-pick');
+    if (!box || box.hidden) return false;
+    box.hidden = true;
+    box.innerHTML = '';
+    UI.startSlot = null;
+    const back = el('btn-back-slots');
+    if (back) back.hidden = true;
+    const hint = el('ss-hint');
+    if (hint) hint.textContent = '选择一个存档位。最多可以同时培养 ' + G.SAVE_SLOTS + ' 个角色。';
+    return true;
   };
 
   UI.hideStart = function () {

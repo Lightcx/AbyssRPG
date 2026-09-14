@@ -285,11 +285,14 @@
     abyss: MUSIC_DIR + 'leberch-suspense-586318.mp3',    // 深渊
     camp: MUSIC_DIR + 'leberch-melancholy-595794.mp3',   // 余烬营地 / 训练场
   };
+  /* 音乐音量上限：滑条 100% 只到元素音量的 40%（50% → 20%），避免音乐盖过音效 */
+  const MUSIC_MAX = 0.4;
   const Music = {
     tracks: MUSIC_TRACKS,
+    maxGain: MUSIC_MAX,
     el: null,
     current: null,
-    volume: 0.6,
+    volume: MUSIC_MAX * 0.6,
     enabled: true,
     _retryT: 0,
     trackFor(area) { return (area === 'town' || area === 'training') ? 'camp' : 'abyss'; },
@@ -307,7 +310,8 @@
       return this.el;
     },
     setVolume(v) {
-      this.volume = Math.max(0, Math.min(1, (Number(v) || 0) / 100));
+      // 滑条 0~100 → 实际音量 0~MUSIC_MAX
+      this.volume = Math.max(0, Math.min(1, (Number(v) || 0) / 100)) * MUSIC_MAX;
       if (this.el) this.el.volume = this.enabled ? this.volume : 0;
     },
     setEnabled(on) {

@@ -2675,7 +2675,7 @@
       const diff = D.diffOf(meta.diffIdx);
       const where = meta.area === 'town' ? '余烬营地' : '深渊 ' + meta.floor + ' 层';
       const when = meta.ts ? new Date(meta.ts) : null;
-      const no = meta.name ? meta.name : ('人物' + used);
+      const no = (i + 1) + ' - ' + cls.name;      // 序号 - 人物名（用职业名，例：1 - 野蛮人）
       card.innerHTML =
         '<div class="sb-glyph">' + cls.glyph + '</div>' +
         '<div class="sb-lines">' +
@@ -2684,7 +2684,7 @@
         '<span class="sb-time">游戏时间 ' + fmtTime(meta.playTime) + '</span></div>' +
         '<div class="sb-l2"><span>' + where + '　' + diff.name + '</span>' +
         '<span>金币 ' + meta.gold + '　残晶 ' + (meta.shards || 0) + '</span></div>' +
-        (when ? '<div class="sb-save">存档位 ' + (i + 1) + '　最后保存 ' + when.toLocaleString() + '</div>' : '<div class="sb-save">存档位 ' + (i + 1) + '</div>') +
+        (when ? '<div class="sb-save">最后保存 ' + when.toLocaleString() + '</div>' : '') +
         '</div>' +
         '<button class="btn danger sb-del" title="删除这个存档">✕</button>';
       card.addEventListener('click', () => UI.loadSlot(i, game));

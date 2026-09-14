@@ -571,23 +571,8 @@ b{color:#f0e2c0;font-weight:600}
 #tooltip .bad{color:#ff8f8f}
 
 /* ================= 存档位 ================= */
-.slot-list{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-bottom:8px}
-.slot-card{
-  width:250px;min-height:210px;padding:16px;border:1px solid #4a3c2a;border-radius:6px;
-  background:linear-gradient(180deg,rgba(40,32,24,.7),rgba(10,8,6,.9));text-align:left;
-  display:flex;flex-direction:column;gap:6px;
-}
-.slot-card.empty{border-style:dashed;align-items:center;justify-content:center;text-align:center;cursor:pointer}
-.slot-card.empty:hover{border-color:var(--gold);transform:translateY(-3px)}
-.slot-card .sc-idx{font-size:11px;letter-spacing:3px;color:#7d6f57}
-.slot-card .sc-name{font-size:20px;color:#f0e2c0;letter-spacing:2px}
-.slot-card .sc-row{font-size:12px;color:#b8ab90;display:flex;justify-content:space-between;border-bottom:1px dashed rgba(200,164,92,.14);padding:2px 0}
-.slot-card .sc-row b{color:#e8dcbb}
-.slot-card .sc-glyph{font-size:40px;text-align:center}
-.slot-card .sc-btns{display:flex;gap:8px;margin-top:auto}
-.slot-card .sc-btns .btn{flex:1;text-align:center}
+/* 旧卡片式存档位已被横幅式（#slot-list / .slot-banner）取代，相关规则一并删除 */
 #slot-list+.ss-foot{margin-top:16px}
-#class-pick[hidden]{display:none}
 
 /* ================= 做装工坊 ================= */
 #panel-craft{left:50%;top:50%;transform:translate(-50%,-50%);width:1020px;max-width:97vw}
@@ -885,7 +870,7 @@ b{color:#f0e2c0;font-weight:600}
   text-shadow:0 0 30px rgba(255,150,40,.35),0 6px 12px #000;font-weight:600;
 }
 .ss-sub{margin:2px 0 26px;font-size:12px;letter-spacing:8px;color:#7d6f57}
-#class-pick{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+/* #class-pick 的布局在文件末尾的弹窗样式里统一定义 */
 .class-card{
   width:230px;padding:16px;border:1px solid #4a3c2a;border-radius:6px;cursor:pointer;
   background:linear-gradient(180deg,rgba(40,32,24,.7),rgba(10,8,6,.9));transition:.18s;text-align:left;
@@ -928,13 +913,31 @@ b{color:#f0e2c0;font-weight:600}
 @keyframes bindpulse{0%,100%{opacity:1}50%{opacity:.45}}
 /* 存档位列表：20 个也要能滚（起始界面不撑高） */
 #slot-list{
-  max-height:56vh;overflow-y:auto;overflow-x:hidden;
-  display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;padding-right:4px;
+  display:flex;flex-direction:column;gap:10px;width:100%;
+  max-height:58vh;overflow-y:auto;overflow-x:hidden;padding-right:6px;
 }
-/* 卡片宽度交给网格轨道，别再写死 250px（否则会压到隔壁列上） */
-#slot-list .slot-card{width:auto;min-width:0}
 #slot-list::-webkit-scrollbar{width:9px}
 #slot-list::-webkit-scrollbar-thumb{background:#3a2f22;border-radius:4px}
+
+/* 横幅式存档条目：一行一个，两行信息 */
+.slot-banner{
+  display:flex;align-items:center;gap:12px;width:100%;box-sizing:border-box;
+  padding:9px 14px;border:1px solid #4a3c2a;border-radius:6px;cursor:pointer;
+  background:linear-gradient(180deg,rgba(40,32,24,.72),rgba(10,8,6,.9));
+}
+.slot-banner:hover{border-color:var(--gold);transform:translateY(-2px)}
+.slot-banner .sb-glyph{flex:none;width:32px;text-align:center;font-size:24px}
+.slot-banner .sb-lines{flex:1;min-width:0}
+.slot-banner .sb-l1{display:flex;align-items:baseline;gap:14px;font-size:14px;color:#f0e2c0;letter-spacing:1px}
+.slot-banner .sb-l1 .sb-lv{color:#e8dcbb;font-size:13px}
+.slot-banner .sb-l1 .sb-time{margin-left:auto;font-size:12px;color:#b8ab90}
+.slot-banner .sb-l2{display:flex;justify-content:space-between;gap:14px;margin-top:4px;font-size:12px;color:#b8ab90}
+.slot-banner .sb-save{margin-top:2px;font-size:11px;color:#7d6f57}
+.slot-banner .sb-del{flex:none;padding:2px 9px;letter-spacing:0}
+.slot-banner.add{border-style:dashed;background:linear-gradient(180deg,rgba(40,32,24,.45),rgba(10,8,6,.7))}
+.slot-banner.add .sb-plus{flex:none;width:32px;text-align:center;font-size:24px;color:#c8a45c}
+.slot-banner.add .sb-l1{color:#ffe9a8;font-size:15px}
+.slot-banner.add:hover{border-color:var(--gold)}
 
 /* 职业选择：盖在起始界面上的弹窗（存档列表留在后面） */
 #class-pick{

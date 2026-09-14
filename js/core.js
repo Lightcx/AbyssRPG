@@ -388,6 +388,7 @@
         floor: d.floor || 1, diffIdx: d.diffIdx || 0, gold: Math.round(d.gold || 0),
         playTime: d.playTime || 0, ts: d.ts || 0, kills: d.kills || 0,
         area: d.area || 'dungeon', name: d.name || '',
+        shards: Math.round(d.shards || 0),
       };
     },
     list() {

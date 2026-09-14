@@ -51,7 +51,6 @@
   G.BALANCE.monsterDeepMit = [0.955, 0.9565, 0.958, 0.9595, 0.961, 0.963];   // 80 层（含）之后的目标平均减伤
   G.BALANCE.monsterDeepFrom = 60;    // 从这一层开始往目标过渡
   G.BALANCE.monsterDeepTo = 80;      // 到这一层完全等于目标
-  G.MONSTER_AVG_ARMOR = 18;          // 参考值（实际用 G.MONSTER_ARMORS 的均值）
 
   // mlvl → 层数（没直接给 floor 时的兜底换算）
   G.mlvlToFloor = function (mlvl, diffIdx) {

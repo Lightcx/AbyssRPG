@@ -2662,42 +2662,50 @@
     if (!box) return;
     box.hidden = false;
     box.innerHTML = '';
+    let used = 0, firstFree = -1;
     G.storage.list().forEach((meta, i) => {
-      const card = root.document.createElement('div');
       if (!meta) {
-        card.className = 'slot-card empty';
-        card.innerHTML = '<div class="sc-glyph">＋</div><div class="sc-name">空存档位 ' + (i + 1) + '</div>' +
-          '<div class="hint dim" style="margin-top:6px">点击创建新角色</div>';
-        card.addEventListener('click', () => UI.pickClassFor(i, game));
-        box.appendChild(card);
-        return;
+        if (firstFree < 0) firstFree = i;
+        return;                                  // 空位不单独占一行，最后统一给一个「+ 新存档」
       }
-      card.className = 'slot-card';
+      used++;
+      const card = root.document.createElement('div');
+      card.className = 'slot-banner';
       const cls = D.classById(meta.cls) || { name: '未知', glyph: '?' };
       const diff = D.diffOf(meta.diffIdx);
       const where = meta.area === 'town' ? '余烬营地' : '深渊 ' + meta.floor + ' 层';
       const when = meta.ts ? new Date(meta.ts) : null;
+      const no = meta.name ? meta.name : ('人物' + used);
       card.innerHTML =
-        '<div class="sc-idx">存档位 ' + (i + 1) + '</div>' +
-        '<div class="sc-glyph">' + cls.glyph + '</div>' +
-        '<div class="sc-name">' + cls.name + '　Lv.' + meta.level + '</div>' +
-        '<div class="sc-row"><span>位置</span><b>' + where + '</b></div>' +
-        '<div class="sc-row"><span>难度</span><b style="color:' + diff.color + '">' + diff.name + '</b></div>' +
-        '<div class="sc-row"><span>金币 / 击杀</span><b>' + meta.gold + ' / ' + meta.kills + '</b></div>' +
-        '<div class="sc-row"><span>游戏时长</span><b>' + fmtTime(meta.playTime) + '</b></div>' +
-        (when ? '<div class="hint dim">最后保存：' + when.toLocaleString() + '</div>' : '') +
-        '<div class="sc-btns"><button class="btn act-load">继续游戏</button><button class="btn danger act-del">删除</button></div>';
-      const lb = card.querySelector ? card.querySelector('.act-load') : null;
-      if (lb) lb.addEventListener('click', (ev) => { ev.stopPropagation(); UI.loadSlot(i, game); });
-      const db = card.querySelector ? card.querySelector('.act-del') : null;
+        '<div class="sb-glyph">' + cls.glyph + '</div>' +
+        '<div class="sb-lines">' +
+        '<div class="sb-l1"><span class="sb-name">' + no + '</span>' +
+        '<span class="sb-lv">等级 ' + meta.level + '</span>' +
+        '<span class="sb-time">游戏时间 ' + fmtTime(meta.playTime) + '</span></div>' +
+        '<div class="sb-l2"><span>' + where + '　' + diff.name + '</span>' +
+        '<span>金币 ' + meta.gold + '　残晶 ' + (meta.shards || 0) + '</span></div>' +
+        (when ? '<div class="sb-save">存档位 ' + (i + 1) + '　最后保存 ' + when.toLocaleString() + '</div>' : '<div class="sb-save">存档位 ' + (i + 1) + '</div>') +
+        '</div>' +
+        '<button class="btn danger sb-del" title="删除这个存档">✕</button>';
+      card.addEventListener('click', () => UI.loadSlot(i, game));
+      const db = card.querySelector ? card.querySelector('.sb-del') : null;
       if (db) db.addEventListener('click', (ev) => {
-        ev.stopPropagation();
+        if (ev && ev.stopPropagation) ev.stopPropagation();
         G.storage.clear(i);
         G.audio.play('ui');
         UI.buildSlots(game);
       });
       box.appendChild(card);
     });
+    /* 只有一个「+ 新存档」横幅：点了就用第一个空位 */
+    if (firstFree >= 0) {
+      const add = root.document.createElement('div');
+      add.className = 'slot-banner add';
+      add.innerHTML = '<div class="sb-plus">＋</div><div class="sb-lines"><div class="sb-l1"><span class="sb-name">新存档</span></div>' +
+        '<div class="sb-l2"><span>点击创建新角色　（空闲存档位 ' + (G.SAVE_SLOTS - used) + ' / ' + G.SAVE_SLOTS + '）</span></div></div>';
+      add.addEventListener('click', () => UI.pickClassFor(firstFree, game));
+      box.appendChild(add);
+    }
   };
 
   UI.pickClassFor = function (slot, game) {
@@ -3130,11 +3138,6 @@
     /* 直接盖在当前面板上：不走 togglePanel，所以原先打开的铁匠铺 / 商人界面会留着 */
     const box = el('panel-confirm');
     if (box) box.hidden = false;
-  };
-
-  UI.confirmVisible = function () {
-    const box = el('panel-confirm');
-    return !!box && box.hidden === false;
   };
 
   // 关掉确认框＝取消；返回 true 表示确实关掉了（给 Esc 用）
@@ -4266,11 +4269,6 @@
     box.hidden = true;
     UI.capture = null;
     return true;
-  };
-
-  UI.bindIOVisible = function () {
-    const box = el('bind-io');
-    return !!box && box.hidden === false;
   };
 
   /* ============================================================

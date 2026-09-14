@@ -2673,7 +2673,8 @@
       card.className = 'slot-banner';
       const cls = D.classById(meta.cls) || { name: '未知', glyph: '?' };
       const diff = D.diffOf(meta.diffIdx);
-      const where = meta.area === 'town' ? '余烬营地' : '深渊 ' + meta.floor + ' 层';
+      /* 显示这个角色到达过的最深渊层数（不是当前所在地） */
+      const deep = Math.max(1, Math.round(meta.maxFloor || meta.floor || 1));
       const when = meta.ts ? new Date(meta.ts) : null;
       const no = (i + 1) + ' - ' + cls.name;      // 序号 - 人物名（用职业名，例：1 - 野蛮人）
       card.innerHTML =
@@ -2682,7 +2683,7 @@
         '<div class="sb-l1"><span class="sb-name">' + no + '</span>' +
         '<span class="sb-lv">等级 ' + meta.level + '</span>' +
         '<span class="sb-time">游戏时间 ' + fmtTime(meta.playTime) + '</span></div>' +
-        '<div class="sb-l2"><span>' + where + '　' + diff.name + '</span>' +
+        '<div class="sb-l2"><span>最深层数 ' + deep + '　' + diff.name + '</span>' +
         '<span>金币 ' + meta.gold + '　残晶 ' + (meta.shards || 0) + '</span></div>' +
         (when ? '<div class="sb-save">最后保存 ' + when.toLocaleString() + '</div>' : '') +
         '</div>' +

@@ -2683,7 +2683,8 @@
         '<div class="sb-l1"><span class="sb-name">' + no + '</span>' +
         '<span class="sb-lv">等级 ' + meta.level + '</span>' +
         '<span class="sb-time">游戏时间 ' + fmtTime(meta.playTime) + '</span></div>' +
-        '<div class="sb-l2"><span>最深层数 ' + deep + '　' + diff.name + '</span>' +
+        '<div class="sb-l2"><span>深渊层数 ' + deep + '　' +
+        '<span class="tag diff-tag" style="color:' + diff.color + ';border-color:' + diff.color + '">' + diff.name + '</span></span>' +
         '<span>金币 ' + meta.gold + '　残晶 ' + (meta.shards || 0) + '</span></div>' +
         (when ? '<div class="sb-save">最后保存 ' + when.toLocaleString() + '</div>' : '') +
         '</div>' +

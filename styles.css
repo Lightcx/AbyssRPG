@@ -932,6 +932,8 @@ b{color:#f0e2c0;font-weight:600}
 .slot-banner .sb-l1 .sb-lv{color:#e8dcbb;font-size:13px}
 .slot-banner .sb-l1 .sb-time{margin-left:auto;font-size:12px;color:#b8ab90}
 .slot-banner .sb-l2{display:flex;justify-content:space-between;gap:14px;margin-top:4px;font-size:12px;color:#b8ab90}
+/* 难度标签：颜色 / 描边跟游戏内 HUD 的难度一致（.tag + 内联 diff.color） */
+.slot-banner .sb-l2 .diff-tag{font-size:11px;padding:0 6px;letter-spacing:1px}
 .slot-banner .sb-save{margin-top:2px;font-size:11px;color:#7d6f57}
 .slot-banner .sb-del{flex:none;padding:2px 9px;letter-spacing:0}
 .slot-banner.add{border-style:dashed;background:linear-gradient(180deg,rgba(40,32,24,.45),rgba(10,8,6,.7))}

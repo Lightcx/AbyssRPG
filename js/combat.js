@@ -823,6 +823,18 @@
           stats: { dmgPct: (b.dmg || 0) + (b.perDmg || 0) * (bl - 1), armor: (b.armor || 0) + (b.perArmor || 0) * (bl - 1) },
         });
         G.FX.nova(game, p.x, p.y, 110, '#ffca6a', 0.5);
+        /* 「战争践踏」这类分支：吼声带一次范围眩晕 */
+        if (mods.stun > 0) {
+          const R = (sk.radius || 120) * areaMul;
+          G.FX.ring(game, p.x, p.y, R, '#ffd9a0');
+          game.monsters.forEach((mo) => {
+            if (!mo.dead && G.dist(p.x, p.y, mo.x, mo.y) < R + mo.r) {
+              mo.stun = Math.max(mo.stun || 0, mods.stun);
+              G.FX.text(game, mo.x, mo.y - mo.r - 10, '眩晕', '#ffd9a0', 13);
+            }
+          });
+          G.ENT.breakProps(game, p.x, p.y, R * 0.7);
+        }
         G.audio.play('shout');
         G.log('你发出战吼，士气高涨！', 'c-rare');
         break;

@@ -205,7 +205,11 @@
       if (mods.explode && sk.proj.explode) s.proj.explode = sk.proj.explode * (1 + mods.explode / 100);
     }
     if (mods.pierce) s.pierce = (sk.pierce || 0) + mods.pierce;
-    if (mods.dur && sk.dur) s.dur = sk.dur + mods.dur;
+    if (mods.dur) {
+      // 地面 / 持续类技能用 sk.dur；战吼这类增益技能的时长在 sk.buff.dur 里
+      if (sk.dur) s.dur = sk.dur + mods.dur;
+      if (sk.buff && sk.buff.dur) s.buff = Object.assign({}, sk.buff, { dur: sk.buff.dur + mods.dur });
+    }
     if (mods.dot) {
       if (sk.dot) s.dot = Object.assign({}, sk.dot, { mult: sk.dot.mult * (1 + mods.dot / 100) });
       if (sk.ignite) s.ignite = Object.assign({}, sk.ignite, { mult: sk.ignite.mult * (1 + mods.dot / 100) });

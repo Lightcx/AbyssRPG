@@ -599,6 +599,16 @@
     rogue_pierce: { id: 'rogue_pierce', cls: 'rogue', name: '穿刺箭', icon: '➹', type: 'projectile', cost: 18, cd: 3.2, elem: 'physical', weaponMult: 1.9, base: 175, per: 23, pierce: 99, proj: { speed: 900, size: 6, color: '#fff0c0', arrow: true, length: 34 }, reqLevel: 3, maxLevel: 25, desc: '射出穿透一切的强力箭矢。' },
     rogue_poison: { id: 'rogue_poison', cls: 'rogue', name: '毒云', icon: '☠', type: 'ground', cost: 20, cd: 6, elem: 'poison', base: 60, per: 9, weaponMult: 0.4, radius: 124, dur: 6, tick: 0.5, reqLevel: 7, maxLevel: 25, desc: '在目标区域留下持续伤害的毒云。' },
     rogue_shadow: { id: 'rogue_shadow', cls: 'rogue', name: '影袭', icon: '🌑', type: 'dash', cost: 16, cd: 5, elem: 'physical', weaponMult: 1.5, base: 150, per: 19, range: 300, radius: 64, reqLevel: 12, maxLevel: 25, desc: '瞬移到目标位置，对路径上的敌人造成伤害。' },
+
+    /* ---- 刺客 ----
+     * 刺杀：附带流血的物理普攻（分支可整体转成毒素，流血也跟着变中毒）
+     * 恩赐解脱：与暴击独立掷骰的「500% 暴击」，概率 = 实际技能等级 × 1%（不吃 25 级后的收益衰减）
+     */
+    sin_basic: { id: 'sin_basic', cls: 'sin', name: '刺杀', icon: '🗡', type: 'basic', cost: 0, cd: 0, elem: 'physical', weaponMult: 1.05, base: 104, per: 10, radius: 74, arc: 1.5, dot: { elem: 'physical', mult: 0.34, dur: 3 }, reqLevel: 0, maxLevel: 25, desc: '一记快刀，并让目标持续流血。' },
+    sin_dart: { id: 'sin_dart', cls: 'sin', name: '毒镖', icon: '🎯', type: 'projectile', cost: 12, cd: 1.5, elem: 'poison', weaponMult: 1.15, base: 120, per: 15, proj: { speed: 640, size: 5, color: '#8ce07a' }, reqLevel: 1, maxLevel: 25, desc: '掷出一枚淬毒飞镖，造成毒素伤害。' },
+    sin_mercy: { id: 'sin_mercy', cls: 'sin', name: '恩赐解脱', icon: '⚔', type: 'cone', cost: 22, cd: 6.5, elem: 'physical', weaponMult: 2.8, base: 210, per: 28, radius: 84, arc: 0.95, mercy: 5, reqLevel: 3, maxLevel: 25, desc: '倾尽全力的一击。每级 +1% 概率触发 500% 暴击（与暴击独立，可叠加）。' },
+    sin_shroud: { id: 'sin_shroud', cls: 'sin', name: '折光', icon: '👤', type: 'stealth', cost: 20, cd: 14, dur: 3, reqLevel: 7, maxLevel: 25, desc: '隐入暗影 3 秒，怪物无法索敌；破隐的那一击造成三倍伤害。' },
+    sin_clone: { id: 'sin_clone', cls: 'sin', name: '影分身', icon: '🌑', type: 'dash', cost: 16, cd: 5, elem: 'physical', weaponMult: 1.3, base: 130, per: 17, range: 320, radius: 70, clone: { radius: 84, mult: 0.55, dur: 1.2 }, reqLevel: 12, maxLevel: 25, desc: '瞬移到目标地点并砸出范围伤害；原地留下一个分身，同样造成一次范围伤害。' },
   };
   D.SKILLS = SKILLS;
   /* 技能等级软化上限：25 级之后（只能靠装备堆）数值仍会提升，但没有新分支，
@@ -626,6 +636,7 @@
    *  · 解锁只看「手动投入的点数」，与装备提供的技能等级无关
    * ============================================================ */
   D.SKILL_TIERS = [5, 10, 15, 20, 25];
+  D.MAX_LEVEL = 100;                 // 人物等级上限（每级 1 技能点 → 满级共 100 点）
   D.BRANCH_STRONG_TIER = 25;
   D.BRANCH_TIER_NAME = { 5: '初阶', 10: '中阶', 15: '高阶', 20: '大师', 25: '传奇' };
 
@@ -739,6 +750,42 @@
       ['致命突袭', { execute: { hp: 35, dmg: 70 } }], ['暗影掌控', { crit: 10, critDmg: 30 }],
       ['千影斩', { dmg: 50, radius: 30 }], ['替换基础闪避', { swapDodge: true }], ['暗影庇护', { leech: 10, splash: 50 }],
     ],
+    /* ---- 刺客 ---- */
+    sin_basic: [
+      ['快刺', { dmg: 18 }], ['扩大伤口', { dot: 60 }],
+      ['锋锐', { crit: 6 }], ['淬毒之刃', { elem: { poison: 1 } }],
+      ['深刺', { dmg: 25, critDmg: 20 }], ['割裂', { radius: 30, dot: 40 }],
+      ['致命一刀', { crit: 8, critDmg: 40 }], ['割喉', { execute: { hp: 35, dmg: 70 } }],
+      ['千刃', { dmg: 45, radius: 25 }], ['毒液浸染', { elem: { poison: 1 }, dot: 90 }], ['影刃', { critDmg: 60, splash: 50 }],
+    ],
+    sin_dart: [
+      ['淬毒', { dmg: 18 }], ['轻掷', { cost: -25 }],
+      ['疾风镖', { speed: 30 }], ['快速投掷', { cd: -20 }],
+      ['穿甲镖', { pierce: 2, dmg: 20 }], ['毒液扩散', { radius: 30, splash: 45 }],
+      ['剧毒', { dot: 80 }], ['连环镖', { speed: 25, pierce: 1 }],
+      ['暴雨梨花', { dmg: 45, pierce: 3 }], ['致命毒液', { dot: 120 }], ['蚀骨', { execute: { hp: 30, dmg: 70 } }],
+    ],
+    sin_mercy: [
+      ['致命一击', { dmg: 22 }], ['节省', { cost: -25 }],
+      ['锐利', { crit: 8 }], ['快速处决', { cd: -25 }],
+      ['重击', { dmg: 30, radius: 20 }], ['处刑', { execute: { hp: 30, dmg: 60 } }],
+      ['精准', { crit: 8, critDmg: 50 }], ['残酷', { dmg: 25, vsBoss: 20 }],
+      ['恩赐降临', { dmg: 50, critDmg: 60 }], ['死神之吻', { crit: 15 }], ['无尽恩赐', { dmg: 35, crit: 10, critDmg: 40 }],
+    ],
+    sin_shroud: [
+      ['长久隐匿', { dur: 2 }], ['快速折光', { cd: -25 }],
+      ['静默', { cost: -30 }], ['连续折光', { cd: -28, cost: -10 }],
+      ['延长隐身', { dur: 3 }], ['轻盈', { cost: -25, cd: -12 }],
+      ['无痕', { dur: 4 }], ['影中之刃', { breakDmg: 50 }],
+      ['暗影长夜', { dur: 5 }], ['致命破隐', { breakDmg: 120 }], ['无声收割', { dur: 3, breakDmg: 80, cd: -15 }],
+    ],
+    sin_clone: [
+      ['重影', { dmg: 20 }], ['节能', { cost: -25 }],
+      ['更远瞬移', { radius: 25 }], ['快速潜行', { cd: -25 }],
+      ['双影', { dmg: 25, radius: 20 }], ['影爆', { splash: 45 }],
+      ['致命分身', { crit: 10 }], ['暗影掌控', { critDmg: 30 }],
+      ['万影', { dmg: 50, radius: 30 }], ['替换基础闪避', { swapDodge: true }], ['暗影庇护', { leech: 10, splash: 50 }],
+    ],
   };
 
   const ELEM_CN_MAP = { physical: '物理', fire: '火焰', cold: '冰冷', lightning: '闪电', poison: '毒素' };
@@ -771,12 +818,13 @@
     burn: (v) => '命中点燃：每秒 ' + Math.round(v.mult * 100) + '% 伤害，持续 ' + v.dur + ' 秒',
     chill: (v) => '命中减速 ' + Math.round(v.slow * 100) + '% / ' + v.dur + ' 秒',
     swapDodge: () => '闪避键改为释放本技能（消耗闪避充能）',
+    breakDmg: (v) => '破隐伤害 +' + v + '%',
   };
   const MOD_ICON = {
     dmg: '⚔', cost: '◍', cd: '⏱', aps: '⚡', radius: '◎', count: '⁙', speed: '➤', size: '⬤', pierce: '➹',
     dur: '⌛', dot: '☠', explode: '✸', buff: '✦', stun: '✷', slow: '❄', knockback: '↦', leech: '♥',
     manaOnKill: '◈', manaOnCast: '◉', crit: '✧', critDmg: '✵', vsBoss: '☠', execute: '⚑', elem: '❂',
-    splash: '✺', burn: '🔥', chill: '❆', swapDodge: '⤢',
+    splash: '✺', burn: '🔥', chill: '❆', swapDodge: '⤢', breakDmg: '☠',
   };
 
   /* 修饰符 → 说明文本 */
@@ -885,6 +933,16 @@
       perLevel: { str: 0.6, dex: 3.2, int: 0.5, vit: 1.9 },
       lifeBase: 66, manaBase: 32, lifePerVit: 4.2, lifePerLevel: 7, manaPerInt: 4,
       skills: ['rogue_basic', 'rogue_multishot', 'rogue_pierce', 'rogue_poison', 'rogue_shadow'],
+      skillReqs: [0, 1, 3, 7, 12],
+    },
+    {
+      id: 'sin', name: '刺客', title: 'Assassin', glyph: '🩸', color: '#c07aff', primary: 'dex',
+      desc: '在阴影里收割。潜行接近、一击破隐，靠爆发与位移决定胜负。',
+      weaponHint: '推荐：匕首 / 剑 / 弓',
+      base: { str: 14, dex: 30, int: 10, vit: 16 },
+      perLevel: { str: 0.9, dex: 3.2, int: 0.6, vit: 1.7 },
+      lifeBase: 62, manaBase: 30, lifePerVit: 4.0, lifePerLevel: 6.5, manaPerInt: 3.8,
+      skills: ['sin_basic', 'sin_dart', 'sin_mercy', 'sin_shroud', 'sin_clone'],
       skillReqs: [0, 1, 3, 7, 12],
     },
   ];

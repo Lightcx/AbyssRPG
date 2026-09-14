@@ -2327,7 +2327,7 @@
     if (xpf) {
       const need = S.xpToNext(p.level);
       xpf.style.width = G.clamp(p.xp / need, 0, 1) * 100 + '%';
-      G.text('xptext', 'Lv.' + p.level + '　' + Math.floor(p.xp) + ' / ' + need);
+      G.text('xptext', p.level >= D.MAX_LEVEL ? ('Lv.' + p.level + '　已满级') : ('Lv.' + p.level + '　' + Math.floor(p.xp) + ' / ' + need));
     }
     const diff = D.diffOf(g.diffIdx);
     const dEl = el('hud-difficulty');

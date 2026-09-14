@@ -78,6 +78,14 @@
   FX.afterimage = function (game, x, y, color) {
     pushP(game, { x, y, vx: 0, vy: 0, life: 0.3, max: 0.3, size: 13, color: color || '#ffffff', type: 'ghost', drag: 0 });
   };
+
+  /* 影分身：留在原地的分身残影（只做视觉，伤害在施放时已经结算） */
+  FX.clone = function (game, x, y, color, dur) {
+    game.fx.push({
+      type: 'clone', x: x, y: y, color: color || '#c07aff',
+      t: dur || 1.2, max: dur || 1.2,
+    });
+  };
   FX.shatter = function (game, x, y, n, color) {
     for (let i = 0; i < n; i++) {
       const a = G.rand(0, G.TAU), sp = G.rand(60, 200);
@@ -126,7 +134,7 @@
       attrPoints: 0, skillPoints: 0, passivePoints: 0,
       skillBranches: {}, guideMet: false,
       alloc: { str: 0, dex: 0, int: 0, vit: 0 },
-      passives: {}, skills: {}, gear: {}, inventory: new Array((G.Town && G.Town.bagCap) ? G.Town.bagCap(null) : 60).fill(null),
+      passives: {}, skills: (function () { const o = {}; o[clsId + '_basic'] = 1; return o; })(), gear: {}, inventory: new Array((G.Town && G.Town.bagCap) ? G.Town.bagCap(null) : 60).fill(null),
       stash: new Array(G.Town ? G.Town.stashCap(null) : 40).fill(null),
       town: G.Town ? G.Town.defaultTown() : { buildings: {} },
       maxFloor: 1,
@@ -134,6 +142,8 @@
       cds: {}, buffs: [], dots: [],
       x: 0, y: 0, vx: 0, vy: 0, facing: 0,
       attackTimer: 0, dodgeTimer: 0, dodgeCd: 0, dodgeX: 0, dodgeY: 0, dodgeCharge: null,
+      // 折光：潜行剩余时间 + 隐身前最后的位置（怪物会朝那里扑）
+      stealth: 0, stealthX: null, stealthY: null, stealthBreak: false, breakMul: 0,
       invuln: 0, hurtFlash: 0, animT: 0, walkT: 0, attackAnim: 0, castAnim: 0,
       moveTarget: null, attackTarget: null, pendingPickup: null, pendingNpc: null,
       aimAttack: false, forceAim: false, jump: null,
@@ -218,6 +228,19 @@
       p.x = mv.x; p.y = mv.y;
       if (G.chance(0.7)) G.FX.afterimage(game, p.x, p.y, p.color);
       return;
+    }
+    /* 折光：潜行倒计时结束就自然现形（破隐的那一下已经由 cast 处理） */
+    if (p.stealth > 0) {
+      p.stealth -= dt;
+      if (p.stealth <= 0) {
+        p.stealth = 0;
+        p.stealthX = null;
+        p.stealthY = null;
+        p.stealthBreak = false;
+        p.breakMul = 0;
+        if (p.buffs) p.buffs = p.buffs.filter((b) => b.id !== 'stealth');
+        G.log('暗影散去，你重新现形。', 'dim');
+      }
     }
     // 闪避充能：按「回满一格所需时间」持续积攒，满了就停
     const dmax = S.dodgeMax(p);
@@ -576,9 +599,15 @@
     }
     const p = game.player;
     if (p.dead) { m.aggro = false; return; }
-    const d = G.dist(m.x, m.y, p.x, p.y);
+    /* 折光：潜行期间怪物看不到玩家，只会朝「隐身前最后的位置」扑过去；
+     * 摸到那个空位置后就失去目标，回去游荡。 */
+    const hidden = p.stealth > 0;
+    const tx0 = hidden && p.stealthX != null ? p.stealthX : p.x;
+    const ty0 = hidden && p.stealthY != null ? p.stealthY : p.y;
+    const d = G.dist(m.x, m.y, tx0, ty0);
     const slowMul = m.slow ? 1 - Math.min(0.8, m.slow.pct) : 1;
     const speed = m.speed * slowMul;
+    if (hidden && m.aggro && d < 46) m.aggro = false;   // 扑空了
 
     /* 光环 */
     if (m.aura) {
@@ -606,7 +635,7 @@
       return;
     }
 
-    if (!m.aggro && (d < m.aggroRange || m.dmgTaken > 0)) m.aggro = true;
+    if (!hidden && !m.aggro && (d < m.aggroRange || m.dmgTaken > 0)) m.aggro = true;
 
     if (!m.aggro) {
       // 闲逛
@@ -633,7 +662,7 @@
       }
     }
 
-    const toP = { x: (p.x - m.x) / (d || 1), y: (p.y - m.y) / (d || 1) };
+    const toP = { x: (tx0 - m.x) / (d || 1), y: (ty0 - m.y) / (d || 1) };
     let mvx = 0, mvy = 0;
     const los = G.Dungeon.lineOfSight(game.map, m.x, m.y, p.x, p.y);
     const pref = m.def.kind === 'ranged' || m.def.kind === 'caster' ? Math.min(m.range * 0.7, 240) : m.range * 0.8;
@@ -752,7 +781,7 @@
       explode: o.explode || 0, pierce: o.pierce || 0, life: o.life || 2,
       homing: o.homing || 0, slow: o.slow || 0, dot: o.dot || null, skill: o.skill || null,
       hits: [], rot: Math.atan2(o.vy, o.vx), alive: true, trail: 0, knockback: o.knockback || 0,
-      ignite: o.ignite || null, radius: o.explode || 0, mods: o.mods || null,
+      ignite: o.ignite || null, dot: o.dot || null, radius: o.explode || 0, mods: o.mods || null,
     };
     game.projectiles.push(pj);
     return pj;
@@ -798,6 +827,7 @@
             pj.hits.push(m);
             C.hitMonster(game, m, pj.comps, { skill: pj.skill, elem: pj.elem, knockback: pj.knockback, dot: pj.dot, mods: pj.mods });
             if (pj.ignite) C.applyDot(game, m, { key: 'ignite', elem: 'fire', dps: (pj.ignite.dps || 20), dur: pj.ignite.dur }, true);
+      if (pj.dot) C.applyDot(game, m, pj.dot, true);
             if (pj.slow) C.applySlow(game, m, pj.slow, 2.5);
             if (pj.explode) { ENT.explode(game, pj); return; }
             if (pj.hits.length > pj.pierce) { pj.alive = false; return; }
@@ -836,6 +866,7 @@
           pj.hits.push(m);
           C.hitMonster(game, m, pj.comps, { skill: pj.skill, elem: pj.elem, knockback: 40, dot: pj.dot, mods: pj.mods });
           if (pj.ignite) C.applyDot(game, m, { key: 'ignite', elem: 'fire', dps: pj.ignite.dps, dur: pj.ignite.dur }, true);
+      if (pj.dot) C.applyDot(game, m, pj.dot, true);
         }
       });
     } else {

@@ -139,7 +139,7 @@
    * 选了 25 级「替换基础闪避」分支后，闪避键改为释放该位移技能，回充时间改用技能冷却。
    */
   S.DODGE_BASE_CD = 2;
-  S.MOVE_SKILL = { barb: 'barb_leap', sorc: 'sorc_teleport', rogue: 'rogue_shadow' };
+  S.MOVE_SKILL = { barb: 'barb_leap', sorc: 'sorc_teleport', rogue: 'rogue_shadow', sin: 'sin_clone' };
 
   // 当前生效的「替换基础闪避」位移技能 id（没选 / 技能等级不足 → null）
   S.dodgeSwapSkill = function (player) {

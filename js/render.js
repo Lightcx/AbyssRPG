@@ -510,6 +510,16 @@
           ctx.lineTo(G.lerp(f.x1, f.x2, k) + jx, G.lerp(f.y1, f.y2, k) + jy);
         }
         ctx.stroke();
+      } else if (f.type === 'clone') {
+        // 影分身：半透明的分身残影，随时间淡出
+        const k = Math.max(0, f.t / (f.max || 1));
+        ctx.globalAlpha = 0.42 * k;
+        ctx.fillStyle = f.color;
+        ctx.beginPath(); ctx.ellipse(f.x, f.y + 4, 11, 12, 0, 0, G.TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(f.x, f.y - 11, 7, 0, G.TAU); ctx.fill();
+        ctx.globalAlpha = 0.5 * k;
+        ctx.strokeStyle = f.color; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(f.x, f.y, 16 + (1 - k) * 10, 0, G.TAU); ctx.stroke();
       } else if (f.type === 'slash') {
         ctx.globalAlpha = (1 - t) * 0.8;
         ctx.strokeStyle = f.color; ctx.lineWidth = 8 * (1 - t) + 2;
@@ -1170,7 +1180,8 @@
       ctx.restore();
       return;
     }
-    if (p.invuln > 0) ctx.globalAlpha = 0.55 + Math.sin(R.time * 40) * 0.25;
+    if (p.stealth > 0) ctx.globalAlpha = 0.34;                 // 折光：潜行时几乎透明
+    else if (p.invuln > 0) ctx.globalAlpha = 0.55 + Math.sin(R.time * 40) * 0.25;
     if (p.hurtFlash > 0) { ctx.shadowColor = '#ff5a5a'; ctx.shadowBlur = 18; }
     const f = p.facing;
     // 斗篷

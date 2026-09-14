@@ -362,7 +362,7 @@
   /* ---------------- 存档（多存档位） ---------------- */
   const KEY_LEGACY = 'shadow-abyss-save-v1';
   const KEY_BASE = 'shadow-abyss-slot';
-  G.SAVE_SLOTS = 3;
+  G.SAVE_SLOTS = 20;
   const slotKey = (slot) => KEY_BASE + '-' + (slot | 0);
 
   function lsGet(k) { try { return root.localStorage ? root.localStorage.getItem(k) : null; } catch (e) { return null; } }

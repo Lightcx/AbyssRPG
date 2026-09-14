@@ -60,6 +60,10 @@
     }
     const m = C.playerDamageMult(player);
     if (m !== 1) for (const k in comps) comps[k] *= m;
+    /* 折光破隐：这一整次施放（含多段 / 溅射）三倍伤害 */
+    if (player && player.stealthBreak && player.breakMul) {
+      for (const k in comps) comps[k] *= player.breakMul;
+    }
     return comps;
   };
 
@@ -81,6 +85,7 @@
     }
     let mult = opts.mult || 1;
     let crit = false;
+    let mercy = false;
     const md = fromPlayer ? opts.mods : null;      // 技能强化分支修饰符
     if (fromPlayer && !opts.isDot && opts.canCrit !== false) {
       const critChance = game.player.stats.crit + (md && md.crit ? md.crit : 0);
@@ -88,6 +93,11 @@
         crit = true;
         mult *= (game.player.stats.critDmg + (md && md.critDmg ? md.critDmg : 0)) / 100;
       }
+    }
+    /* 刺客「恩赐解脱」：与暴击独立掷骰、可叠加；触发时这一击按 500% 暴击结算 */
+    if (fromPlayer && !opts.isDot && opts.mercy > 0 && G.rng.next() * 100 < opts.mercy) {
+      mercy = true;
+      mult *= (opts.mercyMul || 5);
     }
     if (md && md.vsBoss && m.isBoss) mult *= 1 + md.vsBoss / 100;
     if (md && md.execute && m.maxLife > 0 && m.life / m.maxLife <= md.execute.hp / 100) mult *= 1 + md.execute.dmg / 100;
@@ -114,7 +124,11 @@
     if (fromPlayer && game.area === 'training' && game.trainHit) game.trainHit(total, crit);
 
     G.FX.hit(game, m.x, m.y - m.r * 0.4, opts.elem || 'physical', total);
-    G.FX.text(game, m.x + G.rand(-8, 8), m.y - m.r - 12, total, crit ? '#ffe45c' : (G.ELEM_COLOR[opts.elem] || '#f0e6d2'), crit ? 21 : 14, crit);
+    G.FX.text(game, m.x + G.rand(-8, 8), m.y - m.r - 12, mercy ? (total + '!') : total, mercy ? '#c07aff' : (crit ? '#ffe45c' : (G.ELEM_COLOR[opts.elem] || '#f0e6d2')), mercy ? 24 : (crit ? 21 : 14), crit || mercy);
+    if (mercy) {
+      G.FX.text(game, m.x, m.y - m.r - 30, '恩赐解脱', '#c07aff', 15);
+      G.audio.play('crit');
+    }
     if (crit) G.audio.play('crit'); else if (G.chance(0.5)) G.audio.play('hit');
     if (opts.knockback && !m.isBoss) {
       const a = G.ang(game.player.x, game.player.y, m.x, m.y);
@@ -164,6 +178,8 @@
     opts = opts || {};
     const p = game.player;
     if (p.dead || p.invuln > 0) return 0;
+    // 折光：隐身时怪物的直接攻击全部落空（它们只能朝「你消失的位置」发泄）
+    if (p.stealth > 0 && opts.source && opts.source.kind === 'monster') return 0;
     const srcLevel = (opts.source && opts.source.mlvl) || game.mlvl || 1;
     if (G.rng.next() * 100 < p.stats.dodge) {
       G.FX.text(game, p.x, p.y - 26, '闪避', '#cfcfcf', 13);
@@ -461,7 +477,7 @@
     p.xp += amount;
     let need = S.xpToNext(p.level);
     let leveled = 0;
-    while (p.xp >= need && p.level < 99) {
+    while (p.xp >= need && p.level < D.MAX_LEVEL) {
       p.xp -= need;
       p.level++;
       leveled++;
@@ -470,6 +486,8 @@
       if (p.level % 5 === 0) p.passivePoints = (p.passivePoints || 0) + 1;
       need = S.xpToNext(p.level);
     }
+    // 满级之后不再累计经验（经验条停在满格）
+    if (p.level >= D.MAX_LEVEL && p.xp > need) p.xp = need;
     if (leveled) {
       p.recalcFull = true;
       S.derive(p);
@@ -630,6 +648,22 @@
     return game.aimWorld();
   };
 
+  /* 折光：破隐。使用影分身 / 基础闪避以外的技能或普攻都会打破隐身，
+   * 而打破它的那一次施放造成 3 倍伤害（「破隐伤害」分支再往上叠）。 */
+  SK.breakStealth = function (game, p) {
+    const mods = S.skillMods(p, 'sin_shroud');
+    const mul = 3 * (1 + (mods.breakDmg || 0) / 100);
+    p.stealth = 0;
+    p.stealthX = null;
+    p.stealthY = null;
+    p.stealthBreak = true;
+    p.breakMul = mul;
+    if (p.buffs) p.buffs = p.buffs.filter((b) => b.id !== 'stealth');
+    G.FX.nova(game, p.x, p.y, 64, '#c07aff', 0.32);
+    G.log('潜行被打破：这一击造成 ' + (mul % 1 ? mul.toFixed(1) : mul) + ' 倍伤害！', 'c-unique');
+    G.audio.play('crit');
+  };
+
   // opts.ignoreCd：绕过技能自身冷却（闪避充能体系自己控制释放节奏）
   SK.cast = function (game, p, id, aim, opts) {
     const base = D.SKILLS[id];
@@ -643,24 +677,35 @@
     if (p.stun > 0) return false;
     aim = aim || SK.aimPoint(game, p);
     const facing = G.ang(p.x, p.y, aim.x, aim.y);
+    /* 折光：除影分身 / 折光本身之外，任何施放（含普攻）都会破隐，但换来三倍伤害 */
+    p.stealthBreak = false;
+    if (p.stealth > 0 && id !== 'sin_clone' && sk.type !== 'stealth') SK.breakStealth(game, p);
     const comps = C.attackComponents(p, sk, lv);
     const st = p.stats;
     const areaMul = 1 + st.areaDmg / 100;
-    // 每次命中都带上分支修饰符（斩杀 / 吸取 / 暴击等）
-    const hit = (extra) => Object.assign({ skill: id, elem: sk.elem, mods: mods }, extra || {});
+    // 每次命中都带上分支修饰符（斩杀 / 吸取 / 暴击等）；「恩赐解脱」的独立暴击概率 = 实际技能等级 %
+    const mercyChance = sk.mercy ? Math.min(100, S.skillLevel(p, id)) : 0;
+    const hit = (extra) => Object.assign({ skill: id, elem: sk.elem, mods: mods, mercy: mercyChance }, extra || {});
 
     switch (sk.type) {
       case 'basic': {
+        // 刺杀：附带流血（分支转成毒素时，流血也跟着变中毒）
+        const dotElem = (mods.elem && mods.elem.poison) ? 'poison' : (sk.dot ? sk.dot.elem : 'physical');
+        const basicDot = sk.dot ? {
+          key: dotElem === 'poison' ? 'venom' : 'bleed', elem: dotElem,
+          dps: (st.weaponMin + st.weaponMax) / 2 * sk.dot.mult * D.skillDamageMult(sk, lv), dur: sk.dot.dur,
+        } : null;
         if (sk.proj) {
           G.ENT.makeProjectile(game, {
             x: p.x + Math.cos(facing) * 14, y: p.y + Math.sin(facing) * 14,
             vx: Math.cos(facing) * sk.proj.speed, vy: Math.sin(facing) * sk.proj.speed,
             from: 'player', elem: sk.elem, comps, size: sk.proj.size, color: sk.proj.color,
             arrow: sk.proj.arrow, life: 1.6, skill: id, mods: mods, knockback: st.areaDmg > 0 ? 0 : 0,
+            dot: basicDot,
           });
           G.audio.play('arrow');
         } else {
-          SK.coneHit(game, p, comps, facing, (sk.radius || 66) * areaMul, sk.arc || 1.6, hit());
+          SK.coneHit(game, p, comps, facing, (sk.radius || 66) * areaMul, sk.arc || 1.6, hit({ dot: basicDot }));
           G.FX.slash(game, p.x, p.y, facing, (sk.radius || 66) * areaMul);
           G.audio.play('swing');
         }
@@ -709,6 +754,10 @@
           arrow: sk.proj.arrow, length: sk.proj.length, explode: sk.proj.explode ? sk.proj.explode * areaMul : 0,
           pierce: sk.pierce || 0, life: 1.8, skill: id, mods: mods,
           ignite: sk.ignite ? { elem: 'fire', dps: (st.weaponMin + st.weaponMax) / 2 * sk.ignite.mult * D.skillDamageMult(sk, lv), dur: sk.ignite.dur } : null,
+          dot: sk.dot ? {
+            key: sk.dot.key || 'venom', elem: sk.dot.elem || sk.elem,
+            dps: (st.weaponMin + st.weaponMax) / 2 * sk.dot.mult * D.skillDamageMult(sk, lv), dur: sk.dot.dur,
+          } : null,
         });
         G.audio.play(sk.elem === 'fire' ? 'fire' : sk.elem === 'cold' ? 'ice' : 'arrow');
         break;
@@ -753,6 +802,7 @@
         break;
       }
       case 'dash': {
+        const ox = p.x, oy = p.y;                       // 影分身要留在原地
         const d = Math.min(sk.range || 300, G.dist(p.x, p.y, aim.x, aim.y));
         const tx = p.x + Math.cos(facing) * d, ty = p.y + Math.sin(facing) * d;
         const pos = G.Dungeon.findFree(game.map, tx, ty, p.r);
@@ -768,6 +818,20 @@
         }
         p.x = pos.x; p.y = pos.y;
         p.invuln = Math.max(p.invuln, 0.25);
+        /* 影分身：原地留一个分身，砸出一次范围伤害 */
+        if (sk.clone) {
+          const cr = (sk.clone.radius || 80) * areaMul;
+          const cl = Object.assign({}, sk, { weaponMult: (sk.weaponMult || 1) * (sk.clone.mult || 0.5) });
+          const cc = C.attackComponents(p, cl, lv);
+          G.FX.clone(game, ox, oy, p.color, sk.clone.dur || 1.2);
+          G.FX.nova(game, ox, oy, cr, '#c07aff', 0.35);
+          game.monsters.forEach((m) => {
+            if (!m.dead && G.dist(ox, oy, m.x, m.y) < cr + m.r) {
+              C.hitMonster(game, m, cc, hit({ canCrit: true }));
+            }
+          });
+          G.ENT.breakProps(game, ox, oy, cr * 0.7);
+        }
         G.audio.play('dodge');
         break;
       }
@@ -813,6 +877,19 @@
           elem: sk.elem, comps: per, from: 'player', color: G.ELEM_COLOR[sk.elem], skill: id, playerOwned: true, mods: mods,
         });
         G.audio.play('ice');
+        break;
+      }
+      case 'stealth': {
+        const dur = sk.dur || 3;
+        p.stealth = dur;
+        p.stealthX = p.x;
+        p.stealthY = p.y;
+        p.stealthBreak = false;
+        p.breakMul = 0;
+        C.addBuff(game, { id: 'stealth', name: '折光', icon: '👤', dur: dur, stats: {} });
+        G.FX.nova(game, p.x, p.y, 72, '#c07aff', 0.4);
+        G.audio.play('portal');
+        G.log('你隐入暗影（' + dur.toFixed(1) + ' 秒）：怪物会朝你消失的位置扑过去，破隐一击将造成三倍伤害。', 'c-rare');
         break;
       }
       case 'buff': {
@@ -869,6 +946,8 @@
       if (Math.abs(G.angDiff(facing, a)) > arc / 2 + (m.r / Math.max(40, d)) * 0.6) return;
       C.hitMonster(game, m, comps, {
         skill: opts.skill, elem: opts.elem, knockback: opts.knockback, dot: opts.dot, mods: opts.mods,
+      // 「恩赐解脱」的独立暴击标记要一起传下去，否则锥形 / 扇形技能会把它吃掉
+      mercy: opts.mercy, mercyMul: opts.mercyMul, canCrit: opts.canCrit,
       });
     });
     // 也能打碎陶罐 / 木桶

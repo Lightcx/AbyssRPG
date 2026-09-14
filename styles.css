@@ -926,6 +926,14 @@ b{color:#f0e2c0;font-weight:600}
 .bind-row.capturing{background:rgba(200,164,92,.14);box-shadow:0 0 0 1px var(--gold) inset}
 .bind-row.capturing .bkey{color:#fff;animation:bindpulse 1s infinite}
 @keyframes bindpulse{0%,100%{opacity:1}50%{opacity:.45}}
+/* 存档位列表：20 个也要能滚（起始界面不撑高） */
+#slot-list{
+  max-height:56vh;overflow-y:auto;overflow-x:hidden;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:9px;padding-right:4px;
+}
+#slot-list::-webkit-scrollbar{width:9px}
+#slot-list::-webkit-scrollbar-thumb{background:#3a2f22;border-radius:4px}
+
 .settings-foot{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
 /* 音量滑条 */
 .vol-row{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:12px;color:#d8c79f}
